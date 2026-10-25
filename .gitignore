@@ -1,0 +1,5 @@
+# Données des computers en jeu (config.json, log.txt) : propres au monde
+recipecrafter/
+
+# Projet IntelliJ
+.idea/

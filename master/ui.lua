@@ -1,12 +1,12 @@
--- ui.lua : mini framework d'interface (terminal ou moniteur)
+-- ui.lua: mini UI framework (terminal or monitor)
 --
--- Widgets : Label, Button, TextInput, List, Grid, CraftGrid, regroupés dans une Page
--- (`hidden = true` pour en masquer un).
--- App gère l'affichage, les pages, les clics/touches et le rafraîchissement.
+-- Widgets: Label, Button, TextInput, List, Grid, CraftGrid, grouped in a Page
+-- (`hidden = true` to hide one).
+-- App handles the display, the pages, the clicks/keys and the refresh.
 
 local ui = {}
 
--- Écrit `text` en (x, y) sur une largeur w, tronqué et aligné
+-- Writes `text` at (x, y) on a width w, truncated and aligned
 local function draw(t, x, y, w, text, fg, bg, align)
   text = tostring(text or "")
   if #text > w then text = text:sub(1, w) end
@@ -18,7 +18,7 @@ local function draw(t, x, y, w, text, fg, bg, align)
   t.write((" "):rep(left) .. text .. (" "):rep(pad - left))
 end
 
--- Base commune des widgets
+-- Common base of the widgets
 local Widget = {}
 Widget.__index = Widget
 
@@ -54,19 +54,19 @@ end
 ---------------------------------------------------------------- Button
 local Button
 Button, ui.Button = class{ x = 1, y = 1, h = 1, text = "", fg = colors.white, bg = colors.blue,
-  back = colors.black } -- back : fond autour d'un bouton de 3 lignes
+  back = colors.black } -- back: background around a 3-line button
 
 function Button:init() self.w = self.w or #self.text + 2 end
 
--- Caractères de dessin de CC (case = 2 x 3 pixels) : le tiers bas s'obtient en inversant
--- les couleurs du caractère « deux tiers haut »
+-- CC drawing characters (cell = 2 x 3 pixels): the bottom third is obtained by
+-- swapping the colors of the "top two thirds" character
 local THIRD_BOTTOM, THIRD_TOP = "\143", "\131"
 
 function Button:draw(t)
   local bg = self.pressed and colors.lightGray or self.bg
   local fg = self.pressed and colors.black or self.fg
   if self.h == 3 then
-    -- Bouton fin : un tiers de ligne au-dessus et au-dessous du texte, centré
+    -- Thin button: a third of a line above and below the text, centered
     draw(t, self.x, self.y, self.w, THIRD_BOTTOM:rep(self.w), self.back, bg)
     draw(t, self.x, self.y + 1, self.w, self.text, fg, bg, "center")
     draw(t, self.x, self.y + 2, self.w, THIRD_TOP:rep(self.w), bg, self.back)
@@ -121,8 +121,8 @@ function TextInput:key(k)
 end
 
 ---------------------------------------------------------------- List
--- Avec le focus : ↑ ↓ déplacent la sélection (sel), Entrée appelle onSelect.
--- onLeave(list, touche) : flèche qui sort des lignes ; onKey / onChar : autres touches.
+-- With the focus: up / down move the selection (sel), Enter calls onSelect.
+-- onLeave(list, key): arrow that leaves the lines; onKey / onChar: other keys.
 local List
 List, ui.List = class{
   x = 1, y = 1, w = 10, h = 5, offset = 0, emptyText = "",
@@ -139,7 +139,7 @@ function List:setItems(items)
   if self.sel then self.sel = math.max(1, math.min(self.sel, #items)) end
 end
 
--- Sélectionne la ligne i et fait défiler pour qu'elle soit visible
+-- Selects line i and scrolls so that it is visible
 function List:select(i)
   self.sel = i
   if i <= self.offset then self.offset = i - 1
@@ -151,7 +151,7 @@ function List:scroll(n)
   if self.onScroll then self.onScroll(self) end
 end
 
--- Page courante et nombre de pages
+-- Current page and number of pages
 function List:pageInfo()
   local total = math.max(1, math.ceil(#self.items / self.h))
   local cur = math.floor(self.offset / self.h) + 1
@@ -212,10 +212,10 @@ function List:char(c)
 end
 
 ---------------------------------------------------------------- Grid
--- Tuiles sur plusieurs colonnes, défilement par ligne ; items[i] = { text, fg }
--- Le nombre de colonnes dépend de la largeur : tuiles d'au moins tileW caractères.
--- Avec le focus : flèches pour déplacer la sélection (sel), Entrée pour onSelect.
--- onLeave(grid, touche) : flèche qui sort des tuiles ; onKey / onChar : autres touches.
+-- Tiles on several columns, scrolling by row; items[i] = { text, fg }
+-- The number of columns depends on the width: tiles of at least tileW characters.
+-- With the focus: arrows move the selection (sel), Enter calls onSelect.
+-- onLeave(grid, key): arrow that leaves the tiles; onKey / onChar: other keys.
 local Grid
 Grid, ui.Grid = class{
   x = 1, y = 1, w = 20, h = 5, tileW = 12, offset = 0, emptyText = "",
@@ -239,7 +239,7 @@ function Grid:setItems(items)
   if self.sel then self.sel = math.max(1, math.min(self.sel, #items)) end
 end
 
--- Sélectionne la tuile i et fait défiler pour qu'elle soit visible
+-- Selects tile i and scrolls so that it is visible
 function Grid:select(i)
   self.sel = i
   local row = math.ceil(i / self.cols)
@@ -268,7 +268,7 @@ function Grid:draw(t, focused)
     if #self.items == 0 and row == 1 then
       draw(t, self.x, y, self.w, self.emptyText, colors.lightGray, self.bg)
     end
-    -- Une ligne sur deux plus sombre pour séparer les tuiles d'une même colonne
+    -- Every other row darker, to separate the tiles of one column
     local bg = (row % 2 == 0 and self.altBg) or self.tileBg
     for col = 1, self.cols do
       local i = (self.offset + row - 1) * self.cols + col
@@ -284,7 +284,7 @@ end
 
 function Grid:click(app, x, y)
   local col = math.floor((x - self.x) / (self.tileW + 1)) + 1
-  if col > self.cols or x >= self:tileX(col) + self.tileW then return end -- espace entre tuiles
+  if col > self.cols or x >= self:tileX(col) + self.tileW then return end -- space between tiles
   local item = self.items[(self.offset + y - self.y) * self.cols + col]
   if item and self.onSelect then self.onSelect(self, item) end
 end
@@ -297,7 +297,7 @@ function Grid:key(k)
   elseif k == keys.up then j = i - self.cols
   elseif k == keys.down then
     j = i + self.cols
-    -- Dernière ligne incomplète : on va sur la dernière tuile
+    -- Last row incomplete: go to the last tile
     if j > n and math.ceil(i / self.cols) < self:rows() then j = n end
   elseif k == keys.enter then
     local item = self.items[i]
@@ -316,7 +316,7 @@ function Grid:char(c)
 end
 
 ---------------------------------------------------------------- CraftGrid
--- Grille 3x3 ; cells[i] = { text, fg, bg } ou nil (case vide)
+-- 3x3 grid; cells[i] = { text, fg, bg } or nil (empty cell)
 local CraftGrid
 CraftGrid, ui.CraftGrid = class{ x = 1, y = 1, cellW = 4, rowGap = 0 }
 
@@ -366,7 +366,7 @@ function Page:add(w)
   return w
 end
 
--- Un widget avec `hidden = true` n'est ni dessiné ni cliquable
+-- A widget with `hidden = true` is neither drawn nor clickable
 function Page:draw(t)
   for _, w in ipairs(self.widgets) do
     if not w.hidden then w:draw(t, w == self.focus) end
@@ -381,9 +381,9 @@ function Page:widgetAt(x, y)
 end
 
 ---------------------------------------------------------------- App
--- opts.target : terminal ou moniteur ; opts.monitor : nom du moniteur
--- opts.refreshRate : secondes entre deux appels à tick() de la page affichée
--- app.onEvent(ev) : appelé pour les autres événements (ev = { nom, ... })
+-- opts.target: terminal or monitor; opts.monitor: name of the monitor
+-- opts.refreshRate: seconds between two calls to tick() of the displayed page
+-- app.onEvent(ev): called for the other events (ev = { name, ... })
 local App = {}
 App.__index = App
 

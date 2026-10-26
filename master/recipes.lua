@@ -1,19 +1,19 @@
--- recipes.lua : base de recettes (données pures, aucun accès au matériel)
--- Une recette :
---   { output = { name, count }, grid = { [1..9] = nom d'item }, names = { nom -> affichage },
---     machine = "turtle" }  -- machine optionnelle, "turtle" par défaut
--- Une recette de machine Create remplace grid par inputs :
---   { output = ..., machine = "pressing", inputs = { [nom] = quantité } }
--- Fluides (en mB) : fluids = { [nom] = mB } en entrée ; un résultat fluide s'écrit
+-- recipes.lua: recipe base (pure data, no hardware access)
+-- A recipe:
+--   { output = { name, count }, grid = { [1..9] = item name }, names = { name -> display },
+--     machine = "turtle" }  -- machine optional, "turtle" by default
+-- A Create machine recipe replaces grid with inputs:
+--   { output = ..., machine = "pressing", inputs = { [name] = count } }
+-- Fluids (in mB): fluids = { [name] = mB } as input; a fluid result is written
 --   output = { name = "minecraft:lava", count = 50, fluid = true }
--- Deployer : held = l'ingrédient tenu par le deployer (aussi compté dans inputs), les
---   autres vont sur le depot
+-- Deployer: held = the ingredient held by the deployer (also counted in inputs), the
+--   others go on the depot
 --
--- Avec le mod Recipe API, les recettes du jeu viennent de l'API `recipes` du computer,
--- converties dans ce format à la demande. Les recettes de recipes.db (écrites à la
--- main) passent avant celles du jeu pour la même machine.
+-- The AutoCrafter Link mod gives the computer the `recipes` API: the game's recipes are
+-- converted to this format on demand. Recipes from recipes.db (written by hand) come
+-- before the game's recipes for the same machine.
 
--- API du mod, avant que le module ne prenne son nom
+-- The mod's API, before the module takes its name
 local api = type(recipes) == "table" and recipes.getFor and recipes or nil
 
 local recipes = {}
@@ -22,8 +22,8 @@ local list = {}
 local path
 local nameCache = {}
 local fluidNames = {}
--- Venus de l'API du mod (indexNames ne les efface pas)
-local apiCache = {} -- item -> recettes brutes de recipes.getFor
+-- From the mod's API (indexNames does not clear them)
+local apiCache = {} -- item -> raw recipes from recipes.getFor
 local apiNames, apiFluids = {}, {}
 
 local function indexNames()
@@ -35,12 +35,12 @@ local function indexNames()
   end
 end
 
--- true si `name` est un fluide d'une recette (quantités en mB)
+-- true if `name` is a fluid of a recipe (amounts in mB)
 function recipes.isFluid(name)
   return fluidNames[name] == true or apiFluids[name] == true
 end
 
--- "250 mB Water" ou "3 Iron Ingot"
+-- "250 mB Water" or "3 Iron Ingot"
 function recipes.amount(n, name)
   return ("%d%s %s"):format(n, recipes.isFluid(name) and " mB" or "", recipes.displayName(name))
 end
@@ -80,7 +80,7 @@ end
 
 function recipes.all() return list end
 
--- Recettes dont le nom contient q (insensible à la casse)
+-- Recipes whose name contains q (case insensitive)
 function recipes.search(q)
   q = (q or ""):lower()
   if q == "" then return list end
@@ -94,10 +94,10 @@ function recipes.search(q)
   return out
 end
 
----------------------------------------------------------------- recettes du jeu
+---------------------------------------------------------------- game recipes
 
--- Type de recette du jeu -> machine. Les ventilateurs de Create cuisent avec les
--- recettes de fourneau (blasting) et de fumoir (smoking).
+-- Game recipe type -> machine. Create's fans cook with the furnace recipes
+-- (blasting) and the smoker recipes (smoking).
 local TYPE_MACHINE = {
   ["minecraft:crafting"] = "turtle",
   ["create:pressing"] = "pressing", ["create:mixing"] = "mixing",
@@ -107,14 +107,14 @@ local TYPE_MACHINE = {
   ["minecraft:blasting"] = "blasting", ["create:haunting"] = "haunting",
   ["create:crushing"] = "crushing", ["create:milling"] = "milling",
   ["create:cutting"] = "sawing",
-  -- Deployer sur un depot : application à la main (andesite casing) ou deploying
+  -- Deployer on a depot: manual application (andesite casing) or deploying
   ["create:item_application"] = "deploying", ["create:deploying"] = "deploying",
 }
 recipes.TYPE_MACHINE = TYPE_MACHINE
 
 function recipes.hasApi() return api ~= nil end
 
--- Recettes brutes du jeu qui produisent `name` (gardées jusqu'au prochain load)
+-- Raw game recipes that produce `name` (kept until the next load)
 local function gameRecipes(name)
   if not api then return {} end
   if not apiCache[name] then
@@ -124,7 +124,7 @@ local function gameRecipes(name)
   return apiCache[name]
 end
 
--- `name` a une recette qui n'utilise aucun item de `avoid` (ensemble de noms)
+-- `name` has a recipe that uses no item of `avoid` (set of names)
 local function hasRecipe(name, avoid)
   for _, r in ipairs(list) do
     if r.output.name == name then
@@ -146,8 +146,8 @@ local function hasRecipe(name, avoid)
   return false
 end
 
--- Quantité de `name` que fait une recette du jeu avec le stock, sans sous-craft et sans
--- item de `avoid` (bûche écorcée de chêne : autant que de bûches de chêne à la scie)
+-- Amount of `name` a game recipe makes from the stock, without sub-crafts and without
+-- items of `avoid` (stripped oak log: as many as oak logs at the saw)
 local function fromStock(name, avoid, stock)
   local best = 0
   for _, raw in ipairs(gameRecipes(name)) do
@@ -168,12 +168,11 @@ local function fromStock(name, avoid, stock)
   return best
 end
 
--- Alternative d'un slot : la plus en stock ; si aucune n'est en stock, celle qu'on peut
--- le plus faire avec le stock (andesite casing : bûche écorcée de chêne si on a du
--- chêne), sinon la première qui a une recette. Jamais en passant par une autre
--- alternative du slot (planches : le bois se fait avec des bûches, on demande donc des
--- bûches). Les slots aux mêmes alternatives prennent le même item (on ne mélange pas
--- deux bois dans un lot).
+-- Alternative for a slot: the one most in stock; if none is in stock, the one that can
+-- be made the most from the stock (andesite casing: stripped oak log if there is oak),
+-- else the first one that has a recipe. Never through another alternative of the slot
+-- (planks: wood is made from logs, so ask for logs). Slots with the same alternatives
+-- take the same item (two woods are never mixed in one batch).
 local function pick(alts, stock, chosen)
   local key = table.concat(alts, ",")
   if chosen[key] then return chosen[key] end
@@ -202,7 +201,7 @@ local function pick(alts, stock, chosen)
   return best
 end
 
--- Recette du jeu (format de l'API) -> format interne ; nil si la machine n'est pas gérée
+-- Game recipe (API format) -> internal format; nil if the machine is not supported
 function recipes.convert(raw, stock)
   local machine = TYPE_MACHINE[raw.type]
   if not machine or not raw.output then return nil end
@@ -217,13 +216,13 @@ function recipes.convert(raw, stock)
     if w and (w > 3 or raw.height > 3) then return nil end
     r.grid = {}
     for i, alts in ipairs(raw.ingredients) do
-      -- Recette shaped : case i de la recette (largeur w) -> case de la grille 3x3
+      -- Shaped recipe: slot i of the recipe (width w) -> slot of the 3x3 grid
       local cell = w and (math.floor((i - 1) / w) * 3 + (i - 1) % w + 1) or i
       if cell > 9 then return nil end
       if alts[1] then r.grid[cell] = pick(alts, stock, chosen) end
     end
   else
-    -- Deployer : l'item posé puis l'item tenu
+    -- Deployer: the placed item, then the held item
     if machine == "deploying" and #raw.ingredients ~= 2 then return nil end
     r.inputs = {}
     for _, alts in ipairs(raw.ingredients) do
@@ -232,7 +231,7 @@ function recipes.convert(raw, stock)
     end
     if machine == "deploying" then
       r.held = pick(raw.ingredients[2], stock, chosen)
-      if r.inputs[r.held] ~= 1 then return nil end -- posé = tenu : pas géré
+      if r.inputs[r.held] ~= 1 then return nil end -- placed = held: not supported
     end
   end
   for _, f in ipairs(raw.fluids or {}) do
@@ -251,8 +250,8 @@ function recipes.convert(raw, stock)
   return r
 end
 
--- Une recette du jeu par son id (« create:pressing/iron_ingot »), au format interne ;
--- nil sans le mod, si elle n'existe pas ou si sa machine n'est pas gérée
+-- A game recipe by its id ("create:pressing/iron_ingot"), in internal format;
+-- nil without the mod, if it does not exist or if its machine is not supported
 function recipes.get(id, stock)
   if not api then return nil end
   local ok, raw = pcall(api.get, id)
@@ -260,8 +259,8 @@ function recipes.get(id, stock)
   return recipes.convert(raw, stock)
 end
 
--- La même recette du jeu, ses alternatives rechoisies avec `stock` : le stock a pu
--- changer depuis l'affichage de la recette. Telle quelle si elle vient de recipes.db.
+-- The same game recipe, its alternatives chosen again with `stock`: the stock may have
+-- changed since the recipe was displayed. Unchanged if it comes from recipes.db.
 function recipes.refresh(r, stock)
   for _, mine in ipairs(list) do
     if mine == r then return r end
@@ -269,7 +268,7 @@ function recipes.refresh(r, stock)
   return r.id and recipes.get(r.id, stock) or r
 end
 
----------------------------------------------------------------- recherche
+---------------------------------------------------------------- lookup
 
 function recipes.find(outputName)
   for i, r in ipairs(list) do
@@ -278,7 +277,7 @@ function recipes.find(outputName)
   return recipes.findAll(outputName)[1]
 end
 
--- Clé d'une table { nom -> quantité } triée par nom : "a=1,b=2"
+-- Key of a { name -> count } table sorted by name: "a=1,b=2"
 local function sortedKey(m)
   local keys = {}
   for k, v in pairs(m or {}) do keys[#keys + 1] = k .. "=" .. tostring(v) end
@@ -286,8 +285,8 @@ local function sortedKey(m)
   return table.concat(keys, ",")
 end
 
--- Deux recettes qui font la même chose (fourneau et haut fourneau, deux recettes du jeu
--- qui donnent la même grille une fois les alternatives choisies) ont la même signature
+-- Two recipes that do the same thing (furnace and blast furnace, two game recipes that
+-- give the same grid once the alternatives are chosen) have the same signature
 local function signature(r)
   local grid = {}
   for i = 1, 9 do grid[i] = r.grid and r.grid[i] or "" end
@@ -297,9 +296,9 @@ local function signature(r)
   }, "|")
 end
 
--- Toutes les recettes qui produisent `outputName` (un item peut en avoir plusieurs) :
--- celles de recipes.db, puis celles du jeu pour les autres machines, sans doublons.
--- `stock` (optionnel) sert à choisir parmi les alternatives d'un ingrédient.
+-- Every recipe that produces `outputName` (an item can have several): those from
+-- recipes.db, then the game's for the other machines, without duplicates.
+-- `stock` (optional) is used to choose among the alternatives of an ingredient.
 function recipes.findAll(outputName, stock)
   local t, mine, seen = {}, {}, {}
   local function keep(r)
@@ -316,14 +315,14 @@ function recipes.findAll(outputName, stock)
     end
   end
   local raws = gameRecipes(outputName)
-  -- Par prudence, ce qui passe au fumoir ne va pas au ventilateur à lave
+  -- To be safe, what goes in the smoker does not go to the lava fan
   local smoked = false
   for _, raw in ipairs(raws) do
     if raw.type == "minecraft:smoking" then smoked = true end
   end
   for _, raw in ipairs(raws) do
     local machine = TYPE_MACHINE[raw.type]
-    -- getFor renvoie aussi les recettes où l'item n'est qu'un sous-produit
+    -- getFor also returns recipes where the item is only a by-product
     if machine and not mine[machine] and raw.output and raw.output.name == outputName
        and not (smoked and machine == "blasting") then
       local r = recipes.convert(raw, stock)
@@ -333,9 +332,9 @@ function recipes.findAll(outputName, stock)
   return t
 end
 
--- Une page des items craftables, triés par nom : renvoie total, items
--- (items[i] = { name, label, machines }). `machines` (optionnel) : ensemble des machines
--- disponibles, pour ne garder que ce que l'atelier sait faire.
+-- One page of craftable items, sorted by name: returns total, items
+-- (items[i] = { name, label, machines }). `machines` (optional): set of available
+-- machines, to keep only what the workshop can make.
 function recipes.listItems(query, offset, limit, machines)
   if api then
     local types
@@ -356,7 +355,7 @@ function recipes.listItems(query, offset, limit, machines)
     end
     return res.total, items
   end
-  -- Sans le mod : les items de recipes.db
+  -- Without the mod: the items of recipes.db
   local seen, all = {}, {}
   for _, r in ipairs(recipes.search(query)) do
     local n = r.output.name
@@ -373,7 +372,7 @@ function recipes.listItems(query, offset, limit, machines)
   return #all, items
 end
 
--- Même item produit sur la même machine = même recette
+-- Same item made on the same machine = same recipe
 local function indexOf(r)
   for i, other in ipairs(list) do
     if other == r then return i end
@@ -385,7 +384,7 @@ local function indexOf(r)
   end
 end
 
--- Ajoute ou remplace (même item, même machine) ; renvoie true si remplacée
+-- Adds or replaces (same item, same machine); returns true if replaced
 function recipes.add(r)
   local idx = indexOf(r)
   if idx then list[idx] = r else table.insert(list, r) end
@@ -402,29 +401,29 @@ function recipes.remove(r)
   recipes.save()
 end
 
--- Machine qui réalise la recette ; les anciennes recettes n'ont pas ce champ
+-- Machine that makes the recipe; old recipes do not have this field
 function recipes.machine(r)
   return r.machine or "turtle"
 end
 
 local MACHINE_LABELS = {
-  pressing = "presse", mixing = "mixer", compacting = "compactage",
-  filling = "spout", emptying = "vidange",
-  washing = "lavage", smoking = "fumage", blasting = "cuisson", haunting = "hantise",
-  crushing = "broyage", milling = "meule", sawing = "scie", deploying = "deployer",
+  pressing = "press", mixing = "mixer", compacting = "compacting",
+  filling = "spout", emptying = "draining",
+  washing = "washing", smoking = "smoking", blasting = "blasting", haunting = "haunting",
+  crushing = "crushing", milling = "millstone", sawing = "saw", deploying = "deployer",
 }
 
--- Probabilité d'obtenir le résultat à chaque craft (sorties aléatoires) ; 1 par défaut
+-- Probability of getting the result on each craft (random outputs); 1 by default
 function recipes.chance(r)
   return r.chance or 1
 end
 
--- Fluides consommés par un craft (mB)
+-- Fluids used by one craft (mB)
 function recipes.fluids(r)
   return r.fluids or {}
 end
 
--- Items et fluides à prévoir pour `times` crafts, en moyenne si le résultat est aléatoire
+-- Items and fluids needed for `times` crafts, on average if the result is random
 function recipes.expected(r, times)
   local t = {}
   for _, src in ipairs({ recipes.needs(r), recipes.fluids(r) }) do
@@ -435,15 +434,15 @@ function recipes.expected(r, times)
   return t
 end
 
--- Nom de la machine à afficher ; nil pour la turtle
+-- Name of the machine to display; nil for the turtle
 function recipes.machineLabel(r)
   local m = recipes.machine(r)
   if m == "turtle" then return nil end
   return MACHINE_LABELS[m] or m
 end
 
--- Ingrédients à afficher dans une grille 3x3 : la grille de craft pour la
--- turtle, sinon un ingrédient par case pour les machines
+-- Ingredients to display in a 3x3 grid: the crafting grid for the turtle, else one
+-- ingredient per slot for the machines
 function recipes.displayGrid(r)
   if r.grid then return r.grid end
   local cells = {}
@@ -452,7 +451,7 @@ function recipes.displayGrid(r)
   return cells
 end
 
--- Quantité de chaque ingrédient pour un craft
+-- Amount of each ingredient for one craft
 function recipes.needs(r)
   if r.inputs then
     local t = {}
@@ -467,7 +466,7 @@ function recipes.needs(r)
   return t
 end
 
--- Nombre de crafts faisables avec `stock` (sans sous-crafts)
+-- Number of crafts possible with `stock` (without sub-crafts)
 function recipes.craftable(r, stock)
   local best = math.huge
   for _, src in ipairs({ recipes.needs(r), recipes.fluids(r) }) do
@@ -478,7 +477,7 @@ function recipes.craftable(r, stock)
   return best == math.huge and 0 or best
 end
 
--- true si un ingrédient manquant peut lui-même être crafté
+-- true if a missing ingredient can be crafted itself
 function recipes.hasSubCraft(r, stock)
   for name, per in pairs(recipes.expected(r, 1)) do
     if (stock[name] or 0) < per and recipes.find(name) then return true end

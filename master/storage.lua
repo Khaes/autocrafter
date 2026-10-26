@@ -1,11 +1,11 @@
--- storage.lua : accès au stockage et transferts d'items vers la turtle
--- Les items passent par le coffre tampon : stockage -> tampon -> turtle.
+-- storage.lua: access to the storage and item transfers to the turtle
+-- Items go through the buffer chest: storage -> buffer -> turtle.
 
 local config = require("config")
 
 local storage = {
-  stock = {},                            -- nom d'item -> quantité totale
-  GRID = { 1, 2, 3, 5, 6, 7, 9, 10, 11 }, -- cases turtle de la grille 3x3
+  stock = {},                            -- item name -> total count
+  GRID = { 1, 2, 3, 5, 6, 7, 9, 10, 11 }, -- turtle slots of the 3x3 grid
   IS_GRID = {},
 }
 for _, s in ipairs(storage.GRID) do storage.IS_GRID[s] = true end
@@ -14,25 +14,26 @@ local SIDE_DIR = { top = "up", bottom = "down", front = "front" }
 local buffer, suck, drop
 local stackCache = {}
 
--- Vérifie le matériel ; lève une erreur lisible si le montage est incomplet
+-- Checks the hardware; raises a readable error if the setup is incomplete
 function storage.init()
   if not turtle or not turtle.craft then
-    error("Ce programme doit tourner sur une Crafty Turtle.", 0)
+    error("This program must run on a Crafty Turtle.", 0)
   end
   local dir = config.bufferDir or SIDE_DIR[config.buffer]
   if not dir then
-    error("Precise bufferDir dans config.lua pour le tampon " .. config.buffer, 0)
+    error("Set bufferDir in config.json for the buffer " .. config.buffer, 0)
   end
   buffer = peripheral.wrap(config.buffer)
   if not buffer or not buffer.list then
-    error("Coffre tampon introuvable : " .. config.buffer, 0)
+    error("Buffer chest not found: " .. config.buffer, 0)
   end
   suck = ({ up = turtle.suckUp, down = turtle.suckDown, front = turtle.suck })[dir]
   drop = ({ up = turtle.dropUp, down = turtle.dropDown, front = turtle.drop })[dir]
 end
 
--- nil si le tampon est prêt, sinon le message d'erreur. Tant qu'il manque (bloc reposé,
--- modem réactivé), chaque appel réessaie : un tampon absent ne fait pas planter
+-- nil if the buffer is ready, else the error message. While it is missing (block
+-- placed again, modem turned back on), each call tries again: a missing buffer does
+-- not crash anything
 function storage.ready()
   if buffer and peripheral.isPresent(config.buffer) then return end
   buffer = nil
@@ -43,8 +44,8 @@ function storage.ready()
   end
 end
 
--- Inventaires de stockage présents : config.storage, sinon tous sauf les tampons, les
--- sorties et la poubelle
+-- Storage inventories that are present: config.storage, else all except the buffers,
+-- the outputs and the trash
 function storage.names()
   if config.storage then
     local t = {}
@@ -69,8 +70,8 @@ function storage.names()
   return t
 end
 
--- Réservoirs de stockage des fluides ; nil dans config = tous les fluid tanks Create.
--- Un tank absent du réseau (modem coupé) est ignoré.
+-- Fluid storage tanks; nil in the config = every Create fluid tank.
+-- A tank missing from the network (modem off) is skipped.
 function storage.tankNames()
   local t = {}
   if config.fluidStorage then
@@ -85,7 +86,7 @@ function storage.tankNames()
   return t
 end
 
--- Relève le stock total de tous les inventaires, fluides compris (en mB)
+-- Reads the total stock of every inventory, fluids included (in mB)
 function storage.scan()
   local s = {}
   for _, n in ipairs(storage.names()) do
@@ -108,7 +109,7 @@ function storage.scan()
   return s
 end
 
--- Envoie `mB` du fluide `name` des réservoirs vers `target` ; renvoie la quantité envoyée
+-- Sends `mB` of fluid `name` from the tanks to `target`; returns the amount sent
 function storage.exportFluid(name, mB, target)
   local sent = 0
   for _, n in ipairs(storage.tankNames()) do
@@ -118,7 +119,7 @@ function storage.exportFluid(name, mB, target)
   return sent
 end
 
--- Ramène dans les réservoirs tous les fluides de `source` ; false s'il en reste
+-- Moves every fluid of `source` back to the tanks; false if some are left
 function storage.importFluids(source)
   local inv = peripheral.wrap(source)
   for _, f in pairs(inv.tanks()) do
@@ -138,7 +139,7 @@ function storage.count(name)
   return storage.stock[name] or 0
 end
 
--- Taille de pile maximale d'un item (mise en cache)
+-- Max stack size of an item (cached)
 function storage.maxStack(name)
   if stackCache[name] then return stackCache[name] end
   for _, n in ipairs(storage.names()) do
@@ -154,8 +155,8 @@ function storage.maxStack(name)
   return 64
 end
 
--- Ramène dans le stockage le contenu de la case `slot` de l'inventaire `source` ;
--- renvoie le nombre d'items déplacés
+-- Moves the contents of slot `slot` of inventory `source` back to storage;
+-- returns the number of items moved
 function storage.import(source, slot)
   local inv = peripheral.wrap(source)
   local it = inv.list()[slot]
@@ -168,14 +169,14 @@ function storage.import(source, slot)
   return moved
 end
 
--- Ramène tout le contenu de l'inventaire `source` dans le stockage ; false s'il en reste
+-- Moves the whole contents of inventory `source` back to storage; false if some are left
 function storage.empty(source)
   local inv = peripheral.wrap(source)
   for slot in pairs(inv.list()) do storage.import(source, slot) end
   return next(inv.list()) == nil
 end
 
--- true si l'inventaire `inventory` (un seul, pas tout le stockage) contient l'item `name`
+-- true if inventory `inventory` (a single one, not the whole storage) holds item `name`
 function storage.has(inventory, name)
   for _, it in pairs(peripheral.wrap(inventory).list()) do
     if it.name == name then return true end
@@ -183,7 +184,7 @@ function storage.has(inventory, name)
   return false
 end
 
--- Vide l'inventaire de la turtle dans le stockage ; false si ça bloque
+-- Empties the turtle's inventory into storage; false if it gets stuck
 function storage.clearTurtle()
   for s = 1, 16 do
     if turtle.getItemCount(s) > 0 then
@@ -199,7 +200,7 @@ function storage.clearTurtle()
   return emptied
 end
 
--- Amène n items `name` dans la case tslot de la turtle ; renvoie le nombre obtenu
+-- Brings n items `name` into turtle slot tslot; returns the number obtained
 function storage.fetch(name, n, tslot)
   turtle.select(tslot)
   local got = turtle.getItemCount(tslot)
@@ -219,8 +220,8 @@ function storage.fetch(name, n, tslot)
   return got
 end
 
--- Déplace tout le contenu de `source` vers `target` (sortie -> poubelle) ;
--- renvoie le nombre d'items déplacés et le nombre restés dans `source`
+-- Moves the whole contents of `source` to `target` (output -> trash);
+-- returns the number of items moved and the number left in `source`
 function storage.moveAll(source, target)
   local inv = peripheral.wrap(source)
   local moved = 0
@@ -235,10 +236,10 @@ function storage.moveAll(source, target)
   return moved, left
 end
 
--- Envoie n items `name` du stockage vers l'inventaire `target` (dans sa case
--- `toSlot` si elle est donnée) ; renvoie le nombre envoyé.
--- pushItems déplace au plus une pile par appel : une case de drawer (des
--- centaines d'items) est donc vidée en plusieurs appels.
+-- Sends n items `name` from storage to inventory `target` (into its slot `toSlot`
+-- if given); returns the number sent.
+-- pushItems moves at most one stack per call: a drawer slot (hundreds of items) is
+-- therefore emptied in several calls.
 function storage.export(name, n, target, toSlot)
   local sent = 0
   for _, sn in ipairs(storage.names()) do

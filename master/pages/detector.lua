@@ -1,7 +1,8 @@
--- pages/detector.lua : premier lancement, détection du réseau
--- Questions à l'écran pour le stockage, le tampon, la sortie et la poubelle, puis
--- détection des machines à défilement (un coffre d'entrée -> machine -> un coffre de
--- sortie) en envoyant des items de test. Le résultat est enregistré dans config.json.
+-- pages/detector.lua: first start, network detection
+-- On-screen questions for the storage, the buffer, the outputs and the trash, then
+-- detection of the machines by sending test items (flow machines: an inlet chest ->
+-- machine -> an output chest; depots, basins, deployers, workers). The result is
+-- saved in config.json.
 
 local ui = require("ui")
 local config = require("config")
@@ -9,8 +10,8 @@ local storage = require("storage")
 local remote = require("remote")
 local burner = require("machines.burner")
 
--- Montage de test : ces réponses sont prises telles quelles et le scan des machines
--- démarre directement. nil pour poser les questions
+-- Test setup: these answers are taken as is and the machine scan starts right away.
+-- nil to ask the questions
 --[[local DEV_CONFIG = {
   storage = { 'storagedrawers:controller_slave_1' },
   trash = 'minecraft:chest_27',
@@ -19,15 +20,15 @@ local burner = require("machines.burner")
 }]]--
 local DEV_CONFIG = nil
 
--- Items envoyés dans chaque coffre, dans cet ordre (liste : pairs ne garantit pas
--- d'ordre), avec pour chaque machine le résultat attendu. Un résultat doit être
--- certain et propre à sa machine, sinon un autre poste peut être pris pour elle.
--- confirm : 2e item quand le résultat peut venir d'une autre machine ; il doit
--- donner confirm.output dans le même coffre de sortie
+-- Items sent into each chest, in this order (a list: pairs does not guarantee any
+-- order), with for each machine the expected result. A result must be certain and
+-- specific to its machine, otherwise another station could be taken for it.
+-- confirm: 2nd item when the result can come from another machine; it must give
+-- confirm.output in the same output chest
 local TESTS = {
-  -- En premier : le millstone refuse les items sans recette, qui restent alors
-  -- bloqués dans la chute devant lui ; les fans et le saw laissent tout passer.
-  -- Le lavage de gravel sort parfois 1 flint : le blé (farine) confirme le milling
+  -- First: the millstone refuses items without a recipe, which then stay stuck in
+  -- the chute in front of it; the fans and the saw let everything through.
+  -- Washing gravel sometimes gives 1 flint: wheat (flour) confirms the milling
   { item = "minecraft:gravel", results = {
     crushing = {output = 'minecraft:sand', qty = 1},
     milling = {output = 'minecraft:flint', qty = 1,
@@ -51,37 +52,37 @@ local TESTS = {
 local MACHINES = { "turtle", "pressing", "filling", "deploying", "mixing", "compacting", "washing",
   "smoking", "haunting", "blasting", "crushing", "milling", "sawing" }
 local SIDES = { left = true, right = true, front = true, back = true, top = true, bottom = true }
-local INTAKE_DELAY = 1     -- secondes avant de regarder si la machine a pris l'item
-local OUTPUT_TIMEOUT = 9   -- secondes max pour voir arriver le résultat (fans : 7,5 s + trajet)
-local CHECK_INTERVAL = 0.5 -- secondes entre deux relevés des coffres pendant l'attente
-local PROBE_TIMEOUT = 2    -- secondes max pour la réponse des ouvrières
--- Test des depots : press (DEPOT_ITEM -> DEPOT_PRESSED) ou spout d'eau (-> DEPOT_FILLED)
+local INTAKE_DELAY = 1     -- seconds before checking whether the machine took the item
+local OUTPUT_TIMEOUT = 9   -- max seconds to see the result arrive (fans: 7.5 s + travel)
+local CHECK_INTERVAL = 0.5 -- seconds between two readings of the chests while waiting
+local PROBE_TIMEOUT = 2    -- max seconds for the workers' reply
+-- Depot test: press (DEPOT_ITEM -> DEPOT_PRESSED) or water spout (-> DEPOT_FILLED)
 local DEPOT_ITEM, DEPOT_PRESSED, DEPOT_FILLED = "minecraft:dirt", "minecraft:dirt_path", "minecraft:grass_block"
-local SPOUT_WATER = 500    -- mB d'eau envoyés au spout testé
-local DEPOT_TIMEOUT = 3    -- secondes max pour qu'une press ou un spout transforme l'item
--- Test des basins (recettes de Create) : mixer sans chaleur, puis chauffé
+local SPOUT_WATER = 500    -- mB of water sent to the tested spout
+local DEPOT_TIMEOUT = 3    -- max seconds for a press or a spout to transform the item
+-- Basin test (Create recipes): mixer without heat, then heated
 local MIX_ITEMS, MIX_RESULT = { "minecraft:andesite", "minecraft:iron_nugget" }, "create:andesite_alloy"
 local HEATED_ITEMS, HEATED_RESULT = { "minecraft:copper_ingot", "create:zinc_ingot" }, "create:brass_ingot"
-local MIX_TIMEOUT = 10     -- secondes max pour qu'un mixer fasse sa recette
--- Test des basins sous une press (compacting) : create:compacting/andesite_from_flint,
--- 2 flint + 1 gravel + 100 mB de lave, sans chaleur, et qu'aucun mixer ne fait
+local MIX_TIMEOUT = 10     -- max seconds for a mixer to make its recipe
+-- Test of the basins under a press (compacting): create:compacting/andesite_from_flint,
+-- 2 flint + 1 gravel + 100 mB of lava, without heat, and that no mixer makes
 local COMPACT_ITEMS = { "minecraft:flint", "minecraft:flint", "minecraft:gravel" }
 local COMPACT_FLUID, COMPACT_MB, COMPACT_RESULT = "minecraft:lava", 100, "minecraft:andesite"
--- Press chauffée : createdeco:compacting/industrial_iron_ingot (Create Deco ; sans ce mod,
--- les burners des presses ne sont pas trouvés)
+-- Heated press: createdeco:compacting/industrial_iron_ingot (Create Deco; without that
+-- mod, the burners of the presses are not found)
 local HEATED_COMPACT_ITEMS, HEATED_COMPACT_RESULT = { "minecraft:iron_ingot" }, "createdeco:industrial_iron_ingot"
--- Test des deployers (recette de Create) : DEPLOY_ITEM sur le depot, DEPLOY_HELD en main
+-- Deployer test (Create recipe): DEPLOY_ITEM on the depot, DEPLOY_HELD in hand
 local DEPLOY_ITEM, DEPLOY_HELD, DEPLOY_RESULT = "create:cogwheel", "minecraft:oak_planks", "create:large_cogwheel"
-local MARKER = "minecraft:cobblestone" -- item posé dans un coffre pour trouver le tampon d'une ouvrière
+local MARKER = "minecraft:cobblestone" -- item put into a chest to find a worker's buffer
 
--- Configuration vierge : le tampon est toujours sous la turtle
+-- Blank configuration: the buffer is always below the turtle
 local function newConfig()
   local c = { bufferDir = "down", outputs = {}, stations = {} }
   for _, m in ipairs(MACHINES) do c.stations[m] = {} end
   return c
 end
 
--- "minecraft:chest_12" -> "chest_12", pour les messages
+-- "minecraft:chest_12" -> "chest_12", for the messages
 local function short(name)
   return (name:gsub("^minecraft:", ""))
 end
@@ -93,50 +94,50 @@ return function(ctx)
   local detected = newConfig()
   local peripherals = {}
 
-  -- Définies plus bas ; déclarées ici pour les handlers de l'arbre
+  -- Defined below; declared here for the handlers of the tree
   local setInfo, detectMainStorages, searchChest, searchChests
   local startDetection, saveConfig, countFound, reset, detectDepot
 
-  -- storage.lua prend ses inventaires dans config.storage : sans config.json, il
-  -- prendrait tout le réseau (depots, entrées des machines...)
+  -- storage.lua takes its inventories from config.storage: without config.json, it
+  -- would take the whole network (depots, machine inlets...)
   local function setStorage(list)
     detected.storage = list
     config.storage = list
   end
-  local missing -- item de TESTS absent du stockage : la détection s'est arrêtée
-  local outCandidate -- coffre trouvé pour la sortie suivante, pas encore validé
-  local unused = {} -- coffres du réseau qu'aucune étape n'a attribués
-  local savedStorage -- config.storage avant la détection, remis si on l'annule
-  -- Détection « en plus » (relancée depuis l'autocrafter) : stockage, tampon, sorties,
-  -- poubelle et postes de config.json sont gardés, seuls les blocs libres sont testés.
-  -- baseline : nombre de postes déjà configurés, pour ne compter que les nouveaux
+  local missing -- TESTS item missing from the storage: the detection stopped
+  local outCandidate -- chest found for the next output, not confirmed yet
+  local unused = {} -- network chests that no step assigned
+  local savedStorage -- config.storage before the detection, put back if it is cancelled
+  -- "Additional" detection (run again from the auto-crafter): storage, buffer, outputs,
+  -- trash and stations of config.json are kept, only the free blocks are tested.
+  -- baseline: number of stations already configured, to count only the new ones
   local additive, baseline = false, 0
-  local loadCurrent -- défini plus bas
+  local loadCurrent -- defined below
 
-  -- Relancée depuis la page Postes (config.json existe) : on peut revenir sans rien
-  -- changer. Au premier lancement, quitter arrête le programme
+  -- Run again from the Stations page (config.json exists): it is possible to go back
+  -- without changing anything. On the first start, quitting stops the program
   local function quit()
     if not config.scanned then return app:stop() end
     config.storage = savedStorage
-    app:show("postes")
+    app:show("stations")
   end
-  local cancel = { label = "Annuler", run = function() quit() end,
+  local cancel = { label = "Cancel", run = function() quit() end,
                    when = function() return config.scanned end }
 
-  -- Arbre de questions : chaque réponse a un handler optionnel et la question suivante.
-  -- text, label et next peuvent être des fonctions (évaluées à l'affichage / au clic)
+  -- Question tree: each answer has an optional handler and the next question.
+  -- text, label and next can be functions (evaluated on display / on click)
   local tree = {
-    -- Relancée depuis l'autocrafter (config.json existe)
+    -- Run again from the auto-crafter (config.json exists)
     rerun = {
-      text = "Tout recommencer, ou seulement chercher les machines en plus de celles connues ?",
+      text = "Start over, or only look for machines besides the known ones?",
       answers = {
-        { label = "En plus", run = function() loadCurrent() end, next = "scan" },
-        { label = "Tout", run = function() reset() end, next = "mainStorage" },
+        { label = "Additional", run = function() loadCurrent() end, next = "scan" },
+        { label = "Everything", run = function() reset() end, next = "mainStorage" },
         cancel,
       },
     },
     mainStorage = {
-      text = "Le stockage principal est avec des chests ou drawers controller ?",
+      text = "Is the main storage made of chests or of a drawer controller?",
       answers = {
         { label = "Chest", next = "mainStorageWhich" },
         { label = "Drawer", run = function() detectMainStorages() end,
@@ -145,115 +146,115 @@ return function(ctx)
       },
     },
     mainStorageDrawer = {
-      text = function() return "Est ce le drawer " .. detected.storage[1] .. ' ?' end,
+      text = function() return "Is it the drawer " .. detected.storage[1] .. '?' end,
       answers = {
-        { label = "Valider", next = "bufferWhich"},
-        { label = "Retour", run = function() setStorage(nil) end, next = "mainStorage" },
+        { label = "Confirm", next = "bufferWhich"},
+        { label = "Back", run = function() setStorage(nil) end, next = "mainStorage" },
       },
     },
     mainStorageWhich = {
-      text = "Vider les chests et mettre 1 cobblestone dans chaque storage",
+      text = "Empty the chests and put 1 cobblestone in each storage chest",
       answers = {
-        { label = "C'est fait", run = function() setStorage(searchChests('minecraft:cobblestone')) end,
+        { label = "Done", run = function() setStorage(searchChests('minecraft:cobblestone')) end,
           next = function() return #detected.storage > 0 and "mainStorageConfirm" or "mainStorageWhich" end },
-        { label = "Retour", next = "mainStorage" },
+        { label = "Back", next = "mainStorage" },
       },
     },
     mainStorageConfirm = {
-      text = function() return "Est ce les chests " .. table.concat(detected.storage, ", ") .. ' ?' end,
+      text = function() return "Are these the chests " .. table.concat(detected.storage, ", ") .. '?' end,
       answers = {
-        { label = "Valider", next = "bufferWhich", run = function()
-          -- Les cobblestones repérées rejoignent le premier coffre de stockage
+        { label = "Confirm", next = "bufferWhich", run = function()
+          -- The marked cobblestones join the first storage chest
           for index = 2, #detected.storage do
             storage.empty(detected.storage[index])
           end
         end },
-        { label = "Retour", run = function() setStorage(nil) end, next = "mainStorageWhich" },
+        { label = "Back", run = function() setStorage(nil) end, next = "mainStorageWhich" },
       },
     },
     bufferWhich = {
-      text = "Vider les chests et mettre 1 cobblestone dans le tampon",
+      text = "Empty the chests and put 1 cobblestone in the buffer",
       answers = {
-        { label = "C'est fait", run = function()
+        { label = "Done", run = function()
           detected.buffer = searchChest('minecraft:cobblestone')
           if not detected.buffer then
-            -- Cobble présente dessous mais dans aucun coffre du réseau : tampon non relié
+            -- Cobble below but in no chest of the network: buffer not connected
             if peripheral.isPresent("bottom") and storage.has("bottom", 'minecraft:cobblestone') then
-              setInfo("Tampon hors reseau : active son modem")
+              setInfo("Buffer off the network: turn its modem on")
             else
-              setInfo("Pas de cobblestone dans le tampon")
+              setInfo("No cobblestone in the buffer")
             end
           end
         end,
           next = function() return detected.buffer and "bufferConfirm" or "bufferWhich" end },
-        { label = "Retour", next = "mainStorage" },
+        { label = "Back", next = "mainStorage" },
       },
     },
     bufferConfirm = {
-      text = function() return "Est ce le chest " .. detected.buffer .. ' ?' end,
+      text = function() return "Is it the chest " .. detected.buffer .. '?' end,
       answers = {
-        { label = "Valider", next = "outWhich", run = function() storage.empty(detected.buffer) end },
-        { label = "Retour", run = function() detected.buffer = nil end, next = "bufferWhich" },
+        { label = "Confirm", next = "outWhich", run = function() storage.empty(detected.buffer) end },
+        { label = "Back", run = function() detected.buffer = nil end, next = "bufferWhich" },
       },
     },
-    -- Plusieurs sorties possibles : la commande choisit la sienne sur l'écran principal
+    -- Several possible outputs: each order chooses its own on the main screen
     outWhich = {
       text = function()
-        return "Vider les chests et mettre 1 cobblestone dans " ..
-          (detected.outputs[1] and "la sortie suivante" or "l'output")
+        return "Empty the chests and put 1 cobblestone in " ..
+          (detected.outputs[1] and "the next output" or "the output")
       end,
       answers = {
-        { label = "C'est fait", run = function() outCandidate = searchChest('minecraft:cobblestone') end,
+        { label = "Done", run = function() outCandidate = searchChest('minecraft:cobblestone') end,
           next = function() return outCandidate and "outConfirm" or "outWhich" end },
-        { label = "Retour", run = function() detected.outputs = {} end, next = "bufferWhich" },
+        { label = "Back", run = function() detected.outputs = {} end, next = "bufferWhich" },
       },
     },
     outConfirm = {
-      text = function() return "Est ce le chest " .. outCandidate .. ' ?' end,
+      text = function() return "Is it the chest " .. outCandidate .. '?' end,
       answers = {
-        { label = "Valider", next = "outMore", run = function()
+        { label = "Confirm", next = "outMore", run = function()
           storage.empty(outCandidate)
           table.insert(detected.outputs, outCandidate)
           outCandidate = nil
         end },
-        { label = "Retour", run = function() outCandidate = nil end, next = "outWhich" },
+        { label = "Back", run = function() outCandidate = nil end, next = "outWhich" },
       },
     },
     outMore = {
       text = function()
         local names = {}
         for i, n in ipairs(detected.outputs) do names[i] = short(n) end
-        return "Sorties : " .. table.concat(names, ", ") .. ". Une autre sortie ?"
+        return "Outputs: " .. table.concat(names, ", ") .. ". Another output?"
       end,
       answers = {
-        { label = "Oui", next = "outWhich" },
-        { label = "Non", next = "trash" },
+        { label = "Yes", next = "outWhich" },
+        { label = "No", next = "trash" },
       },
     },
     trash = {
-      text = "Le reseau a t'il une poubelle ?",
+      text = "Does the network have a trash?",
       answers = {
-        { label = "Oui", next = "trashWhich" },
-        { label = "Non", run = function() detected.trash = nil end, next = "scan" },
+        { label = "Yes", next = "trashWhich" },
+        { label = "No", run = function() detected.trash = nil end, next = "scan" },
       },
     },
     trashWhich = {
-      text = "Mettre un cobblestone dans la poubelle et desactiver son mecanisme",
+      text = "Put a cobblestone in the trash and turn its mechanism off",
       answers = {
-        { label = "C'est fait", run = function() detected.trash = searchChest('minecraft:cobblestone') end,
+        { label = "Done", run = function() detected.trash = searchChest('minecraft:cobblestone') end,
           next = function() return detected.trash and "trashConfirm" or "trashWhich" end },
-        { label = "Retour", next = "trash" },
+        { label = "Back", next = "trash" },
       },
     },
     trashConfirm = {
-      text = function() return "Est ce le chest " .. detected.trash .. ' ?' end,
+      text = function() return "Is it the chest " .. detected.trash .. '?' end,
       answers = {
-        { label = "Valider", next = "scan", run = function() storage.empty(detected.trash) end },
-        { label = "Retour", run = function() detected.trash = nil end, next = "trashWhich" },
+        { label = "Confirm", next = "scan", run = function() storage.empty(detected.trash) end },
+        { label = "Back", run = function() detected.trash = nil end, next = "trashWhich" },
       },
     },
     scan = {
-      text = "La detection des machines va commencer",
+      text = "The machine detection is about to start",
       answers = {
         { label = "Go", run = function() startDetection() end,
           next = function() return missing and "missingItem" or "save" end },
@@ -261,39 +262,39 @@ return function(ctx)
       },
     },
     missingItem = {
-      text = function() return "Pas assez de " .. short(missing) .. " dans le stockage. En ajouter puis relancer" end,
+      text = function() return "Not enough " .. short(missing) .. " in the storage. Add some, then retry" end,
       answers = {
-        { label = "Relancer", next = "scan" },
-        { label = "Quitter", run = function() quit() end },
+        { label = "Retry", next = "scan" },
+        { label = "Quit", run = function() quit() end },
       },
     },
     save = {
       text = function()
-        local extra = unused[1] and (", " .. #unused .. " coffre(s) sans role") or ""
-        local found = additive and ((countFound() - baseline) .. " nouvelle(s) machine(s)")
-                      or (countFound() .. " machine(s) detectee(s)")
-        return found .. extra .. ". Enregistrer la configuration ?"
+        local extra = unused[1] and (", " .. #unused .. " chest(s) without a role") or ""
+        local found = additive and ((countFound() - baseline) .. " new machine(s)")
+                      or (countFound() .. " machine(s) detected")
+        return found .. extra .. ". Save the configuration?"
       end,
       answers = {
-        { label = "Enregistrer", run = function() saveConfig() end, next = "reboot" },
-        { label = "Recommencer", run = function() reset() end, next = "mainStorage" },
+        { label = "Save", run = function() saveConfig() end, next = "reboot" },
+        { label = "Start over", run = function() reset() end, next = "mainStorage" },
         cancel,
       },
     },
     reboot = {
-      text = "Configuration enregistree. Redemarrer pour lancer l'autocrafter",
+      text = "Configuration saved. Restart to run the auto-crafter",
       answers = {
-        { label = "Redemarrer", run = function() os.reboot() end },
+        { label = "Restart", run = function() os.reboot() end },
       },
     },
   }
 
-  -- Disposition : titre, info (INFO_LINES lignes), question (QUESTION_LINES lignes),
-  -- les boutons, et en bas le status et le nombre de machines
+  -- Layout: title, info (INFO_LINES lines), question (QUESTION_LINES lines), the
+  -- buttons, and at the bottom the status and the number of machines
   local INFO_Y, INFO_LINES = 3, 2
   local QUESTION_Y, QUESTION_LINES = 6, 3
   page:add(ui.Label{
-    x = 1, y = 1, w = W, text = "DETECTION DU RESEAU", align = "center",
+    x = 1, y = 1, w = W, text = "NETWORK DETECTION", align = "center",
     fg = colors.black, bg = colors.yellow,
   })
   local status = page:add(ui.Label{ x = 1, y = H - 3, w = W, text = "", align = "right" })
@@ -306,7 +307,7 @@ return function(ctx)
   for i = 1, QUESTION_LINES do
     questionLines[i] = page:add(ui.Label{ x = 1, y = QUESTION_Y + i - 1, w = W, text = "", align = "center" })
   end
-  -- Trois réponses au plus, sur une ligne ; la position x est calculée dans setButtons
+  -- Three answers at most, on one line; the x position is computed in setButtons
   local BUTTON_W, BUTTON_GAP = 11, 2
   local buttons = {}
   for i = 1, 3 do
@@ -315,9 +316,9 @@ return function(ctx)
     })
   end
 
-  ---------------------------------------------------------------- Affichage
-  -- Le scan bloque la boucle de l'app : chaque changement de texte redessine l'écran.
-  -- Pas de print : il écrirait par-dessus l'interface quand elle est sur le terminal
+  ---------------------------------------------------------------- Display
+  -- The scan blocks the app's loop: each text change redraws the screen.
+  -- No print: it would write over the UI when it is on the terminal
 
   local function updateStatus(text)
     status.text = text
@@ -332,17 +333,17 @@ return function(ctx)
 
   local function updateNumber()
     local n = countFound()
-    number.text = n > 0 and 'Machines trouvees : ' .. n or "Aucune machine trouvee"
+    number.text = n > 0 and 'Machines found: ' .. n or "No machine found"
     app:render()
   end
 
-  -- Une valeur peut être une chaîne ou une fonction qui la renvoie
+  -- A value can be a string or a function that returns it
   local function resolve(v)
     if type(v) == "function" then return v() end
     return v
   end
 
-  -- Découpe un texte en lignes de `width` caractères au plus, aux espaces
+  -- Cuts a text into lines of at most `width` characters, at the spaces
   local function wrap(text, width)
     local lines, line = {}, ""
     for word in text:gmatch("%S+") do
@@ -359,7 +360,7 @@ return function(ctx)
     return lines
   end
 
-  -- Répartit un texte sur des labels d'une ligne ; ce qui dépasse est perdu
+  -- Spreads a text over one-line labels; what does not fit is lost
   local function setLines(labels, text)
     local lines = wrap(text or "", W)
     for i, l in ipairs(labels) do l.text = lines[i] or "" end
@@ -372,8 +373,8 @@ return function(ctx)
     app:render()
   end
 
-  -- choices : { { label, onClick }, ... } ; les boutons affichés sont centrés,
-  -- ceux en trop sont masqués
+  -- choices: { { label, onClick }, ... }; the displayed buttons are centered, the
+  -- extra ones are hidden
   local function setButtons(choices)
     local n = math.min(#choices, #buttons)
     local total = n * BUTTON_W + (n - 1) * BUTTON_GAP
@@ -392,25 +393,25 @@ return function(ctx)
   ---------------------------------------------------------------- Questions
   local ask, update
 
-  -- Affiche l'erreur à la place de la question, avec de quoi recommencer ou quitter
+  -- Shows the error instead of the question, with a way to retry or quit
   local function fail(msg)
-    status.text = "Erreur"
+    status.text = "Error"
     setLines(infoLines, "")
     setQuestion(msg)
     setButtons({
-      { label = "Reessayer", onClick = function() update() end },
-      { label = "Quitter", onClick = function() quit() end },
+      { label = "Retry", onClick = function() update() end },
+      { label = "Quit", onClick = function() quit() end },
     })
     app:render()
   end
 
-  -- Pendant un handler, les boutons sont masqués : l'écran montre qu'il travaille
-  -- et un second clic ne peut pas relancer l'action
+  -- During a handler the buttons are hidden: the screen shows that it is working and
+  -- a second click cannot start the action again
   local function choose(a)
     if a.run then
-      setLines(infoLines, "") -- le handler y écrit le résultat s'il y en a un
+      setLines(infoLines, "") -- the handler writes its result there if it has one
       setButtons({})
-      updateStatus("Mise a jour ...")
+      updateStatus("Updating ...")
       local ok, err = pcall(a.run)
       if not ok then return fail(tostring(err)) end
       updateStatus("")
@@ -420,7 +421,7 @@ return function(ctx)
     if nextId then
       ask(nextId)
     else
-      setQuestion("Detection terminee")
+      setQuestion("Detection finished")
       setButtons({})
       app:render()
     end
@@ -441,9 +442,9 @@ return function(ctx)
     app:render()
   end
 
-  ---------------------------------------------------------------- Réseau
-  -- Range les périphériques du réseau par type dans `peripherals`. Avec withTurtle,
-  -- renvoie un message d'erreur si le montage autour de la turtle ne va pas
+  ---------------------------------------------------------------- Network
+  -- Sorts the network peripherals by type into `peripherals`. With withTurtle, returns
+  -- an error message if the setup around the turtle is wrong
   local function detectPeripherals(withTurtle)
     peripherals = { ['minecraft:chest'] = {} }
     local aroundTurtle = {}
@@ -462,12 +463,12 @@ return function(ctx)
         if type == 'minecraft:chest' then nbChest = nbChest + 1 end
       end
       if nbChest ~= 1 or aroundTurtle.bottom ~= "minecraft:chest" then
-        return "Il faut un seul chest colle a la turtle : le tampon, en dessous"
+        return "The turtle needs exactly one chest next to it: the buffer, below"
       end
     end
   end
 
-  -- Coffres déjà attribués (stockage, tampon, sortie, poubelle)
+  -- Chests already assigned (storage, buffer, outputs, trash)
   local function assigned()
     local used = {}
     for _, name in ipairs(detected.storage or {}) do used[name] = true end
@@ -476,7 +477,7 @@ return function(ctx)
     for _, key in ipairs({ "buffer", "trash" }) do
       if detected[key] then used[detected[key]] = true end
     end
-    -- Blocs des postes déjà connus (détection en plus) : ni testés, ni vidés
+    -- Blocks of the stations already known (additional detection): neither tested nor emptied
     for _, list in pairs(detected.stations) do
       for _, station in ipairs(list) do
         for _, key in ipairs({ "inlet", "output", "name", "spout", "deployer", "burner", "buffer" }) do
@@ -487,9 +488,9 @@ return function(ctx)
     return used
   end
 
-  -- Coffres non attribués qui contiennent itemName
+  -- Unassigned chests that hold itemName
   function searchChests(itemName)
-    -- Relit le réseau : un modem a pu être activé depuis l'ouverture de la page
+    -- Reads the network again: a modem may have been turned on since the page opened
     detectPeripherals(false)
     local used, chests = assigned(), {}
     for _, name in ipairs(peripherals['minecraft:chest']) do
@@ -497,11 +498,11 @@ return function(ctx)
         table.insert(chests, name)
       end
     end
-    if #chests == 0 then setInfo("Aucun chest du reseau avec " .. itemName) end
+    if #chests == 0 then setInfo("No chest of the network with " .. itemName) end
     return chests
   end
 
-  -- Premier coffre non attribué qui contient itemName
+  -- First unassigned chest that holds itemName
   function searchChest(itemName)
     return searchChests(itemName)[1]
   end
@@ -513,20 +514,20 @@ return function(ctx)
         setStorage({ peripherals[type][1] })
       end
     end
-    setInfo(detected.storage and "" or "Aucun drawer controller unique trouve")
+    setInfo(detected.storage and "" or "No single drawer controller found")
   end
 
-  -- Vide un coffre dans la poubelle, ou dans le stockage s'il n'y en a pas
+  -- Empties a chest into the trash, or into the storage if there is none
   local function trashChest(chest)
     if detected.trash then storage.moveAll(chest, detected.trash) else storage.empty(chest) end
   end
 
   ---------------------------------------------------------------- Machines
-  -- Champs d'un poste qui sont des blocs du réseau, dans l'ordre des messages
+  -- Station fields that are network blocks, in the order of the messages
   local STATION_KEYS = { "inlet", "output", "name", "spout", "deployer", "burner" }
 
-  -- Ajoute un poste à machineName : { inlet, output } (défilement), { name } (press),
-  -- { name, spout } (spout)... Ses blocs sont pris et ses inventaires vidés
+  -- Adds a station to machineName: { inlet, output } (flow), { name } (press),
+  -- { name, spout } (spout)... Its blocks are taken and its inventories emptied
   local function addToDetected(machineName, station, used)
     local names = {}
     for _, key in ipairs(STATION_KEYS) do
@@ -537,12 +538,12 @@ return function(ctx)
         if peripheral.hasType(name, "inventory") then trashChest(name) end
       end
     end
-    setInfo("Machine de " .. machineName .. " trouvee ( " .. table.concat(names, " => ") .. " )")
+    setInfo(machineName .. " machine found ( " .. table.concat(names, " => ") .. " )")
     table.insert(detected.stations[machineName], station)
     updateNumber()
   end
 
-  -- Quantité de chaque item dans un inventaire : { [nom] = total }
+  -- Count of each item in an inventory: { [name] = total }
   local function totals(name)
     local t = {}
     for _, item in pairs(peripheral.wrap(name).list()) do
@@ -551,9 +552,9 @@ return function(ctx)
     return t
   end
 
-  -- Contenu des coffres non attribués autres que l'entrée : { [coffre] = totals }.
-  -- Relevé avant l'envoi puis pendant l'attente : seule l'augmentation compte, ce
-  -- qui restait d'un scan précédent dans un coffre de sortie est ignoré
+  -- Contents of the unassigned chests other than the inlet: { [chest] = totals }.
+  -- Read before sending, then while waiting: only the increase counts, what was left
+  -- in an output chest by a previous scan is ignored
   local function snapshot(inlet, used, storages)
     local t = {}
     for _, name in ipairs(storages) do
@@ -566,17 +567,17 @@ return function(ctx)
     return (now[chest][item] or 0) - ((before[chest] or {})[item] or 0)
   end
 
-  -- Regarde toutes les CHECK_INTERVAL s, OUTPUT_TIMEOUT s au plus (temps réel : le
-  -- relevé des coffres compte dans l'attente), si un coffre a reçu un des résultats
-  -- attendus : renvoie la machine et ce coffre. Abandonne dès que le coffre d'entrée
-  -- n'est plus vide (item rendu ou refusé) ou que itemName ressort tel quel ailleurs
-  -- (la machine ne le traite pas : ce coffre est vidé)
+  -- Checks every CHECK_INTERVAL s, OUTPUT_TIMEOUT s at most (real time: reading the
+  -- chests counts in the wait), whether a chest received one of the expected results:
+  -- returns the machine and that chest. Gives up as soon as the inlet chest is no
+  -- longer empty (item given back or refused) or itemName comes out unchanged elsewhere
+  -- (the machine does not process it: that chest is emptied)
   local function waitOutput(inlet, itemName, results, used, storages, before)
     local inv = peripheral.wrap(inlet)
     local start = os.clock()
     while os.clock() - start < OUTPUT_TIMEOUT do
       sleep(CHECK_INTERVAL)
-      setInfo(("Attente du resultat ... %.1f/%g s"):format(os.clock() - start, OUTPUT_TIMEOUT))
+      setInfo(("Waiting for the result ... %.1f/%g s"):format(os.clock() - start, OUTPUT_TIMEOUT))
       local now = snapshot(inlet, used, storages)
       for chest in pairs(now) do
         for machineName, data in pairs(results) do
@@ -593,8 +594,8 @@ return function(ctx)
     end
   end
 
-  -- Envoie confirm.item dans inlet ; true s'il donne confirm.output dans output,
-  -- false s'il y arrive tel quel (pas traité) ou si rien n'arrive à temps
+  -- Sends confirm.item into inlet; true if it gives confirm.output in output, false
+  -- if it arrives unchanged (not processed) or if nothing arrives in time
   local function confirmOutput(inlet, output, confirm)
     local before = { [output] = totals(output) }
     if storage.export(confirm.item, 1, inlet) == 0 then
@@ -604,7 +605,7 @@ return function(ctx)
     local start = os.clock()
     while os.clock() - start < OUTPUT_TIMEOUT do
       sleep(CHECK_INTERVAL)
-      setInfo(("Confirmation avec %s ... %.1f/%g s"):format(short(confirm.item), os.clock() - start, OUTPUT_TIMEOUT))
+      setInfo(("Confirming with %s ... %.1f/%g s"):format(short(confirm.item), os.clock() - start, OUTPUT_TIMEOUT))
       local now = { [output] = totals(output) }
       if gained(before, now, output, confirm.output) > 0 then return true end
       if gained(before, now, output, confirm.item) > 0 then return false end
@@ -612,21 +613,21 @@ return function(ctx)
     return false
   end
 
-  -- Envoie chaque item de TESTS dans le coffre jusqu'à trouver la machine qu'il
-  -- alimente ; true si trouvée. Un coffre qui garde l'item n'alimente rien (le
-  -- premier, le gravel, passe partout) : on le vide et on arrête là
+  -- Sends each item of TESTS into the chest until the machine it feeds is found;
+  -- true if found. A chest that keeps the item feeds nothing (the first one, gravel,
+  -- goes through everything): it is emptied and the tests stop there
   local function testChest(inlet, used, storages)
     local inv = peripheral.wrap(inlet)
     for _, test in ipairs(TESTS) do
-      updateStatus('Test sur ' .. short(inlet) .. ' avec ' .. short(test.item))
+      updateStatus('Testing ' .. short(inlet) .. ' with ' .. short(test.item))
       local before = snapshot(inlet, used, storages)
       if storage.export(test.item, 1, inlet) == 0 then
-        missing = test.item -- épuisé pendant le scan : la détection s'arrête
+        missing = test.item -- used up during the scan: the detection stops
         return false
       else
         sleep(INTAKE_DELAY)
         if next(inv.list()) ~= nil then
-          updateStatus('Coffre inchange, nettoyage ...')
+          updateStatus('Chest unchanged, cleaning ...')
           storage.empty(inlet)
           return false
         else
@@ -634,7 +635,7 @@ return function(ctx)
           local confirm = machineName and test.results[machineName].confirm
           if confirm and not confirmOutput(inlet, output, confirm) then
             if missing then return false end
-            storage.empty(output) -- résultat d'une autre machine : on continue les tests
+            storage.empty(output) -- result of another machine: the tests go on
             machineName = nil
           end
           if machineName then
@@ -642,7 +643,7 @@ return function(ctx)
             return true
           end
           if next(inv.list()) ~= nil then
-            updateStatus('Item revenu dans le coffre, nettoyage ...')
+            updateStatus('Item back in the chest, cleaning ...')
             storage.empty(inlet)
           end
         end
@@ -651,9 +652,9 @@ return function(ctx)
     return false
   end
 
-  -- used : coffres déjà attribués, ou à une machine ; ignorés, et complétés au passage
+  -- used: chests already assigned, or taken by a machine; skipped, and filled in along the way
   local function handleStorages(storages, used)
-    updateStatus('Detection des coffres')
+    updateStatus('Detecting the chests')
     for _, name in ipairs(storages) do
       if not used[name] then
         testChest(name, used, storages)
@@ -662,7 +663,7 @@ return function(ctx)
     end
   end
 
-  -- Regarde chaque seconde si itemName est sur le depot, DEPOT_TIMEOUT s au plus
+  -- Checks every second whether itemName is on the depot, DEPOT_TIMEOUT s at most
   local function waitItem(depot, itemName)
     for _ = 1, DEPOT_TIMEOUT do
       sleep(1)
@@ -680,13 +681,13 @@ return function(ctx)
     end
   end
 
-  -- Un DEPOT_ITEM sur le depot : press s'il devient DEPOT_PRESSED, sinon chaque spout
-  -- libre reçoit SPOUT_WATER mB d'eau, et celui qui en fait du DEPOT_FILLED est au-dessus
+  -- A DEPOT_ITEM on the depot: press if it becomes DEPOT_PRESSED, else each free spout
+  -- gets SPOUT_WATER mB of water, and the one that makes DEPOT_FILLED is above it
   function detectDepot(depot, used)
-    updateStatus('Test du ' .. short(depot))
-    storage.empty(depot) -- restes d'un essai raté
+    updateStatus('Testing ' .. short(depot))
+    storage.empty(depot) -- leftovers of a failed try
     if storage.export(DEPOT_ITEM, 1, depot) == 0 then
-      missing = DEPOT_ITEM -- épuisé pendant le scan : la détection s'arrête
+      missing = DEPOT_ITEM -- used up during the scan: the detection stops
       return false
     end
     if waitItem(depot, DEPOT_PRESSED) then
@@ -697,11 +698,11 @@ return function(ctx)
       if not used[spout] then
         if storage.exportFluid('minecraft:water', SPOUT_WATER, spout) < SPOUT_WATER then
           storage.importFluids(spout)
-          setInfo("Pas assez d'eau (" .. SPOUT_WATER .. " mB) : spouts ignores")
+          setInfo("Not enough water (" .. SPOUT_WATER .. " mB): spouts skipped")
           break
         end
         local filled = waitItem(depot, DEPOT_FILLED)
-        -- L'eau non utilisée retourne aux tanks, que ce soit le bon spout ou non
+        -- The unused water goes back to the tanks, whether it is the right spout or not
         storage.importFluids(spout)
         if filled then
           addToDetected('filling', { name = depot, spout = spout }, used)
@@ -714,24 +715,24 @@ return function(ctx)
   end
 
   ---------------------------------------------------------------- Basins
-  -- Envoie 1 de chaque item de `items` dans target ; false (et missing) s'il en manque un
+  -- Sends 1 of each item of `items` into target; false (and missing) if one is missing
   local function sendEach(items, target)
     for _, item in ipairs(items) do
       if storage.export(item, 1, target) == 0 then
-        -- Encore en stock : c'est target qui refuse l'item, pas un manque
+        -- Still in stock: target refuses the item, it is not missing
         storage.scan()
         if storage.count(item) > 0 then
-          error(short(target) .. " refuse " .. short(item), 0)
+          error(short(target) .. " refuses " .. short(item), 0)
         end
-        missing = item -- épuisé pendant le scan : la détection s'arrête
+        missing = item -- used up during the scan: the detection stops
         return false
       end
     end
     return true
   end
 
-  -- Regarde chaque seconde, MIX_TIMEOUT s au plus, les basins de `list` ; s'arrête dès
-  -- que `count` d'entre eux ont fini (done(basin) vrai). Renvoie ceux qui ont fini
+  -- Checks the basins of `list` every second, MIX_TIMEOUT s at most; stops as soon
+  -- as `count` of them are done (done(basin) true). Returns those that are done
   local function waitBasins(list, done, count)
     local finished = {}
     for _ = 1, MIX_TIMEOUT do
@@ -745,14 +746,14 @@ return function(ctx)
     return finished
   end
 
-  -- Vide items et fluides d'un basin dans le stockage
+  -- Empties the items and fluids of a basin into the storage
   local function cleanBasin(basin)
     storage.empty(basin)
     storage.importFluids(basin)
   end
 
-  -- Donne au deployer 1 combustible de niveau `heat` (burner.fuels) : true s'il l'a
-  -- donné à un blaze burner (main vide), false sinon (repris), nil si pas de combustible
+  -- Gives the deployer 1 fuel of level `heat` (burner.fuels): true if it gave it to a
+  -- blaze burner (empty hand), false otherwise (taken back), nil if there is no fuel
   local function feedBurner(deployer, heat)
     local given = false
     for _, fuel in ipairs(burner.fuels({}, heat)) do
@@ -771,7 +772,7 @@ return function(ctx)
     end
   end
 
-  -- Basins libres qui font `result` après send(basin) (envoie les items de test), puis vidés
+  -- Free basins that make `result` after send(basin) (sends the test items), then emptied
   local function findMachines(basins, used, send, result, label)
     local tested = {}
     for _, basin in ipairs(basins or {}) do
@@ -782,19 +783,19 @@ return function(ctx)
       end
     end
     if #tested == 0 then return {} end
-    updateStatus('Recherche des ' .. label)
+    updateStatus('Looking for ' .. label)
     local found = waitBasins(tested, function(b) return storage.has(b, result) end)
     for _, basin in ipairs(tested) do cleanBasin(basin) end
     return found
   end
 
-  -- Blaze burners sous les basins de `stations` ({ [basin] = poste }). Chaque basin reçoit
-  -- sa recette chauffée de test (heatTest[basin] = { items, result }), puis chaque
-  -- deployer libre reçoit un combustible, un à la fois : s'il le donne, c'est un burner,
-  -- et le basin qui fait alors son résultat est le sien. Une seule recherche pour mixers
-  -- et presses : un burner allumé par un deployer pendant la recherche d'une machine
-  -- serait vu « déjà allumé » par l'autre. Un blaze burner fait heated et superheated :
-  -- le poste est noté superheated. Renvoie les remarques, ou nil si un item manque
+  -- Blaze burners under the basins of `stations` ({ [basin] = station }). Each basin gets
+  -- its heated test recipe (heatTest[basin] = { items, result }), then each free
+  -- deployer gets a fuel, one at a time: if it gives it away, it is a burner, and the
+  -- basin that then makes its result is its own. A single search for mixers and
+  -- presses: a burner lit by a deployer during the search for one machine would be seen
+  -- "already lit" by the other. A blaze burner does heated and superheated: the station
+  -- is marked superheated. Returns the remarks, or nil if an item is missing
   local function findBurners(stations, heatTest, deployers, used)
     local notes, cold = {}, {}
     for basin in pairs(stations) do
@@ -802,20 +803,20 @@ return function(ctx)
       cold[#cold + 1] = basin
     end
     if #cold == 0 then return notes end
-    updateStatus('Recherche des blaze burners')
+    updateStatus('Looking for blaze burners')
     local heated = function(b) return storage.has(b, heatTest[b].result) end
-    -- Burner déjà allumé avant le scan : on ne peut pas savoir quel deployer le nourrit
+    -- Burner already lit before the scan: there is no way to know which deployer feeds it
     for _, basin in ipairs(waitBasins(cold, heated, 1)) do
       stations[basin].heat = "superheated"
       remove(cold, basin)
-      notes[#notes + 1] = short(basin) .. " : burner deja allume, deployer inconnu"
+      notes[#notes + 1] = short(basin) .. ": burner already lit, deployer unknown"
     end
     for _, deployer in ipairs(deployers or {}) do
       if #cold == 0 then break end
       if not used[deployer] then
         local fed = feedBurner(deployer, "heated")
         if fed == nil then
-          notes[#notes + 1] = "pas de combustible heated"
+          notes[#notes + 1] = "no heated fuel"
           break
         end
         if fed then
@@ -831,11 +832,11 @@ return function(ctx)
     return notes
   end
 
-  -- 1. MIX_ITEMS dans tous les basins libres : ceux qui font MIX_RESULT ont un mixer.
-  -- 2. COMPACT_ITEMS et COMPACT_MB mB de COMPACT_FLUID dans les basins restés libres :
-  --    ceux qui font COMPACT_RESULT ont une press au-dessus (compacting).
-  -- 3. Burners des mixers (HEATED_ITEMS -> HEATED_RESULT) et des presses
-  --    (HEATED_COMPACT_ITEMS -> HEATED_COMPACT_RESULT), ensemble (findBurners).
+  -- 1. MIX_ITEMS in every free basin: those that make MIX_RESULT have a mixer.
+  -- 2. COMPACT_ITEMS and COMPACT_MB mB of COMPACT_FLUID in the basins still free:
+  --    those that make COMPACT_RESULT have a press above (compacting).
+  -- 3. Burners of the mixers (HEATED_ITEMS -> HEATED_RESULT) and of the presses
+  --    (HEATED_COMPACT_ITEMS -> HEATED_COMPACT_RESULT), together (findBurners).
   local function handleBasin(basins, deployers, used)
     local mixers = findMachines(basins, used, function(b) return sendEach(MIX_ITEMS, b) end,
                                 MIX_RESULT, "mixers")
@@ -853,11 +854,11 @@ return function(ctx)
       end
       if storage.exportFluid(COMPACT_FLUID, COMPACT_MB, b) < COMPACT_MB then
         cleanBasin(b)
-        missing = COMPACT_FLUID -- épuisé pendant le scan : la détection s'arrête
+        missing = COMPACT_FLUID -- used up during the scan: the detection stops
         return false
       end
       return true
-    end, COMPACT_RESULT, "press sur basin")
+    end, COMPACT_RESULT, "presses on basins")
     if not presses then return end
 
     local stations, heatTest, kind = {}, {}, {}
@@ -878,9 +879,9 @@ return function(ctx)
   end
 
   ---------------------------------------------------------------- Deployers
-  -- DEPLOY_ITEM sur chaque depot libre, puis chaque deployer libre reçoit DEPLOY_HELD,
-  -- un à la fois : le depot qui fait alors DEPLOY_RESULT est sous ce deployer.
-  -- Le deployer doit être en mode « utiliser » (clic droit)
+  -- DEPLOY_ITEM on each free depot, then each free deployer gets DEPLOY_HELD, one at a
+  -- time: the depot that then makes DEPLOY_RESULT is under that deployer.
+  -- The deployer must be in "use" mode (right click)
   local function handleDeployer(depots, deployers, used)
     local free = {}
     for _, depot in ipairs(depots or {}) do
@@ -896,7 +897,7 @@ return function(ctx)
     for _, deployer in ipairs(deployers or {}) do
       if #free == 0 then break end
       if not used[deployer] then
-        updateStatus('Test du ' .. short(deployer))
+        updateStatus('Testing ' .. short(deployer))
         storage.empty(deployer)
         if storage.export(DEPLOY_HELD, 1, deployer) == 0 then
           missing = DEPLOY_HELD
@@ -910,7 +911,7 @@ return function(ctx)
           end
           if found then break end
         end
-        storage.empty(deployer) -- planche pas utilisée : pas au-dessus d'un depot libre
+        storage.empty(deployer) -- plank not used: not above a free depot
         if found then
           remove(free, found)
           addToDetected('deploying', { name = found, deployer = deployer }, used)
@@ -920,11 +921,11 @@ return function(ctx)
     for _, depot in ipairs(free) do storage.empty(depot) end
   end
 
-  ---------------------------------------------------------------- Ouvrières
-  -- Demande son tampon à chaque ouvrière de `ids` ; { [id] = cases du tampon } pour
-  -- celles qui ont répondu (pas de réponse : worker.lua ne tourne pas)
-  -- Les réponses sont lues ici avec rednet.receive, pas par remote.listen : avec
-  -- DEV_CONFIG, la détection tourne dans app:show, avant que main.lua lance listen
+  ---------------------------------------------------------------- Workers
+  -- Asks each worker of `ids` for its buffer; { [id] = buffer slots } for those that
+  -- replied (no reply: worker.lua is not running)
+  -- The replies are read here with rednet.receive, not by remote.listen: with
+  -- DEV_CONFIG, the detection runs in app:show, before main.lua starts listen
   local function probeWorkers(ids)
     local jobs = {}
     for _, id in ipairs(ids) do jobs[id] = remote.send(id, { kind = "probe" }) end
@@ -933,7 +934,7 @@ return function(ctx)
       local from, msg = rednet.receive(remote.PROTOCOL, deadline - os.clock())
       if from and jobs[from] and type(msg) == "table" and msg.job == jobs[from] then
         replies[from] = msg.items or {}
-        remote.take(msg.job, from) -- copie gardée par listen s'il tourne
+        remote.take(msg.job, from) -- copy kept by listen if it is running
         jobs[from] = nil
       end
     end
@@ -948,37 +949,37 @@ return function(ctx)
     return n
   end
 
-  -- Les turtles du réseau qui répondent sont des ouvrières. Leur tampon est trouvé en
-  -- posant 1 MARKER dans chaque coffre libre : c'est celui que l'ouvrière voit arriver
+  -- The network turtles that reply are workers. Their buffer is found by putting
+  -- 1 MARKER into each free chest: it is the one the worker sees arrive
   local function handleWorkers(chests, used)
     local ids, notes, known = {}, {}, {}
     for _, w in ipairs(detected.stations.turtle) do known[w.worker] = true end
     for _, name in ipairs(peripherals['turtle'] or {}) do
       local id = peripheral.call(name, "getID")
       if known[id] then
-        -- ouvrière déjà configurée (détection en plus)
+        -- worker already configured (additional detection)
       elseif peripheral.call(name, "isOn") then
         ids[#ids + 1] = id
       else
-        notes[#notes + 1] = "turtle " .. id .. " eteinte"
+        notes[#notes + 1] = "turtle " .. id .. " off"
       end
     end
     if #ids == 0 then return end
-    if not remote.isOpen() then return setInfo("Pas de modem : ouvrieres ignorees") end
-    updateStatus('Detection des turtles ouvrieres')
+    if not remote.isOpen() then return setInfo("No modem: workers skipped") end
+    updateStatus('Detecting the worker turtles')
     local before = probeWorkers(ids)
     local workers = {}
     for _, id in ipairs(ids) do
       if before[id] then
         workers[#workers + 1] = id
       else
-        notes[#notes + 1] = "turtle " .. id .. " sans worker.lua"
+        notes[#notes + 1] = "turtle " .. id .. " without worker.lua"
       end
     end
     for _, chest in ipairs(chests) do
       if #workers == 0 then break end
       if not used[chest] then
-        updateStatus('Tampon des ouvrieres : ' .. short(chest))
+        updateStatus('Worker buffers: ' .. short(chest))
         if storage.export(MARKER, 1, chest) == 0 then
           missing = MARKER
           return
@@ -998,31 +999,31 @@ return function(ctx)
       end
     end
     for _, id in ipairs(workers) do
-      notes[#notes + 1] = "ouvriere " .. id .. " : tampon hors reseau"
+      notes[#notes + 1] = "worker " .. id .. ": buffer off the network"
     end
     if #notes > 0 then setInfo(table.concat(notes, ", ")) end
   end
 
-  -- Coffres qu'aucune étape n'a attribués : comptés à l'enregistrement, nommés ici
-  -- (la page Postes les montre aussi, en jaune)
+  -- Chests that no step assigned: counted when saving, named here
+  -- (the Stations page shows them too, in yellow)
   local function handleRemaining(chests)
     unused = chests
     if not chests[1] then return end
     local names = {}
     for i, n in ipairs(chests) do names[i] = short(n) end
-    setInfo("Sans role : " .. table.concat(names, ", "))
+    setInfo("No role: " .. table.concat(names, ", "))
   end
 
   function startDetection()
-    -- Un nouveau scan repart de zéro : pas de postes en double. En plus : les postes
-    -- connus restent, leurs blocs sont pris (assigned) et les nouveaux s'ajoutent
+    -- A new scan starts from scratch: no duplicate stations. Additional: the known
+    -- stations stay, their blocks are taken (assigned) and the new ones are added
     if not additive then
       for _, m in ipairs(MACHINES) do detected.stations[m] = {} end
     end
     unused = {}
     updateNumber()
     setQuestion('')
-    -- Tous les items de test doivent être là avant de commencer
+    -- Every test item must be there before starting
     missing = nil
     local needed = { DEPOT_ITEM }
     for _, test in ipairs(TESTS) do
@@ -1040,7 +1041,7 @@ return function(ctx)
       needed[#needed + 1] = DEPLOY_ITEM
       needed[#needed + 1] = DEPLOY_HELD
     end
-    -- Quantité de chaque item : un item listé deux fois (2 flint) en demande 2
+    -- Count of each item: an item listed twice (2 flint) asks for 2
     local counts, order = {}, {}
     for _, item in ipairs(needed) do
       if not counts[item] then order[#order + 1] = item end
@@ -1048,7 +1049,7 @@ return function(ctx)
     end
     if peripherals['create:basin'] then
       order[#order + 1] = COMPACT_FLUID
-      counts[COMPACT_FLUID] = COMPACT_MB -- en mB : les fluides sont comptés avec les items
+      counts[COMPACT_FLUID] = COMPACT_MB -- in mB: fluids are counted with the items
     end
     storage.scan()
     for _, item in ipairs(order) do
@@ -1057,7 +1058,7 @@ return function(ctx)
         return
       end
     end
-    -- Coffres attribués, partagé par toutes les étapes
+    -- Assigned chests, shared by every step
     local used = assigned()
     handleStorages(peripherals['minecraft:chest'], used)
     if missing then return end
@@ -1065,14 +1066,14 @@ return function(ctx)
     if missing then return end
     handleBasin(peripherals['create:basin'], peripherals['create:deployer'], used)
     if missing then return end
-    -- Après les basins : les deployers des blaze burners sont déjà pris
+    -- After the basins: the deployers of the blaze burners are already taken
     handleDeployer(peripherals['create:depot'], peripherals['create:deployer'], used)
     if missing then return end
     local remaining = {}
     for _, name in ipairs(peripherals['minecraft:chest']) do
       if not used[name] then table.insert(remaining, name) end
     end
-    -- Après les machines : le MARKER ne doit pas tomber dans l'entrée d'une machine
+    -- After the machines: the MARKER must not fall into a machine's inlet
     handleWorkers(remaining, used)
     if missing then return end
     local left = {}
@@ -1082,13 +1083,13 @@ return function(ctx)
     handleRemaining(left)
   end
 
-  ---------------------------------------------------------------- Enregistrement
-  -- Champs que la détection ne trouve pas (timeout, idle, retries, fuel...) : repris de
-  -- l'ancien poste qui avait les mêmes blocs. Les blocs et la chaleur viennent du scan
+  ---------------------------------------------------------------- Saving
+  -- Fields the detection does not find (timeout, idle, retries, fuel...): taken from
+  -- the old station that had the same blocks. The blocks and the heat come from the scan
   local DETECTED_KEYS = { heat = true, worker = true }
   for _, key in ipairs(STATION_KEYS) do DETECTED_KEYS[key] = true end
   local function keepSettings(old, station)
-    if old and old[1] == nil and next(old) then old = { old } end -- un seul poste, sans liste
+    if old and old[1] == nil and next(old) then old = { old } end -- a single station, no list
     for _, o in ipairs(old or {}) do
       if o.name == station.name and o.inlet == station.inlet and o.worker == station.worker then
         for k, v in pairs(o) do
@@ -1099,16 +1100,16 @@ return function(ctx)
     end
   end
 
-  -- Écrit le résultat dans config.json. Les réglages déjà présents dans le fichier
-  -- (fuel, monitorScale...) sont gardés. Les machines que la détection sait trouver
-  -- (MACHINES) sont remplacées : un poste démonté disparaît de la configuration ; les
-  -- autres (emptying, écrits à la main) ne changent pas
+  -- Writes the result into config.json. The settings already in the file (fuel,
+  -- monitorScale...) are kept. The machines the detection can find (MACHINES) are
+  -- replaced: a dismantled station disappears from the configuration; the others
+  -- (emptying, written by hand) do not change
   function saveConfig()
     config.edit(function(out)
       for _, key in ipairs({ "storage", "buffer", "bufferDir", "trash" }) do
         out[key] = detected[key]
       end
-      out.output = nil -- ancienne clé, remplacée par outputs
+      out.output = nil -- old key, replaced by outputs
       out.outputs = detected.outputs[1] and detected.outputs or nil
       out.stations = out.stations or {}
       for _, m in ipairs(MACHINES) do
@@ -1119,8 +1120,8 @@ return function(ctx)
     end)
   end
 
-  -- Détection en plus : la configuration enregistrée (config.json, pas la mémoire où
-  -- les postes ont des champs de travail) devient le point de départ
+  -- Additional detection: the saved configuration (config.json, not the memory where
+  -- the stations have working fields) becomes the starting point
   function loadCurrent()
     reset()
     additive = true
@@ -1137,7 +1138,7 @@ return function(ctx)
     for _, m in ipairs(MACHINES) do
       local list = (data.stations or {})[m]
       if type(list) ~= "table" or next(list) == nil then list = {}
-      elseif list[1] == nil then list = { list } end -- un seul poste, sans liste
+      elseif list[1] == nil then list = { list } end -- a single station, no list
       detected.stations[m] = list
     end
     baseline = countFound()
@@ -1159,14 +1160,14 @@ return function(ctx)
     if err then return fail(err) end
     if not DEV_CONFIG then return ask(config.scanned and 'rerun' or 'mainStorage') end
     for key, value in pairs(DEV_CONFIG) do detected[key] = value end
-        setStorage(detected.storage)
+    setStorage(detected.storage)
     local ok, scanErr = pcall(startDetection)
     if not ok then return fail(tostring(scanErr)) end
     ask(missing and 'missingItem' or 'save')
   end
 
-  -- Relancée depuis la page Postes : on repart de zéro, la configuration actuelle est
-  -- gardée pour « Annuler »
+  -- Run again from the Stations page: starts from scratch, the current configuration
+  -- is kept for "Cancel"
   page.onShow = function()
     savedStorage = config.storage
     reset()

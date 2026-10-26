@@ -1,8 +1,8 @@
--- pages/postes.lua : blocs du réseau de la configuration (étape 9), ouverte par le
--- bouton « Postes » de l'écran principal. Vert : présent ; rouge : absent (cassé, modem
--- coupé ou renuméroté) ; jaune : bloc du réseau qu'aucun rôle n'utilise.
--- « Reparer » remplace un bloc renuméroté (network.repair) ; « Detecter » relance la
--- détection (pages/detector.lua), seulement quand aucune commande ne tourne.
+-- pages/stations.lua: network blocks of the configuration (step 9), opened by the
+-- "Stations" button of the main screen. Green: present; red: missing (broken, modem
+-- off or renumbered); yellow: network block that no role uses.
+-- "Repair" replaces a renumbered block (network.repair); "Detect" runs the detection
+-- again (pages/detector.lua), only when no order is running.
 
 local ui = require("ui")
 local network = require("network")
@@ -16,11 +16,11 @@ return function(ctx)
   local short = network.short
 
   page:add(ui.Label{
-    x = 1, y = 1, w = W, text = "POSTES DU RESEAU", align = "center",
+    x = 1, y = 1, w = W, text = "NETWORK STATIONS", align = "center",
     fg = colors.black, bg = colors.yellow,
   })
   local list = page:add(ui.List{
-    x = 1, y = 2, w = W, h = H - 5, altBg = colors.gray, emptyText = "Aucun bloc configure",
+    x = 1, y = 2, w = W, h = H - 5, altBg = colors.gray, emptyText = "No block configured",
   })
   local status = page:add(ui.Label{ x = 1, y = H - 3, w = W, text = "" })
   local function setStatus(text, color)
@@ -34,23 +34,23 @@ return function(ctx)
     local state = network.state or network.check()
     local items = {}
     for _, r in ipairs(state.rows) do
-      local what = r.worker and ("ouvriere " .. r.worker) or short(r.name)
-      items[#items + 1] = { text = r.role .. " " .. what, right = r.present and "ok" or "absent",
+      local what = r.worker and ("worker " .. r.worker) or short(r.name)
+      items[#items + 1] = { text = r.role .. " " .. what, right = r.present and "ok" or "missing",
                             fg = r.present and colors.lime or colors.red,
                             rightFg = r.present and colors.lime or colors.red }
     end
     for _, n in ipairs(state.new) do
-      items[#items + 1] = { text = short(n), right = "sans role", fg = colors.yellow, rightFg = colors.yellow }
+      items[#items + 1] = { text = short(n), right = "no role", fg = colors.yellow, rightFg = colors.yellow }
     end
     list:setItems(items)
     repairBtn.hidden = state.missing == 0
   end
 
-  -- Boutons de 3 lignes, texte en H - 1, à une colonne des bords : le cadre du moniteur
-  -- prend la couleur de fond de la case voisine et ferait dépasser le bord du bouton
+  -- 3-line buttons, text on H - 1, one column away from the edges: the monitor's frame
+  -- takes the background color of the next cell and would make the button overflow
   local y = H - 2
   page:add(ui.Button{
-    x = 2, y = y, w = 8, h = 3, text = "< Retour",
+    x = 2, y = y, w = 8, h = 3, text = "< Back",
     onClick = function() app:show("list") end,
   })
   page:add(ui.Button{
@@ -62,24 +62,24 @@ return function(ctx)
     onClick = function() list:scroll(list.h) end,
   })
   repairBtn = page:add(ui.Button{
-    x = 19, y = y, w = 9, h = 3, text = "Reparer", bg = colors.orange, fg = colors.black,
+    x = 19, y = y, w = 9, h = 3, text = "Repair", bg = colors.orange, fg = colors.black,
     onClick = function()
       local done = network.repair()
       if done[1] then
-        storage.ready() -- le tampon a peut-être changé de nom
-        setStatus("Remplace : " .. table.concat(done, ", "), colors.lime)
+        storage.ready() -- the buffer may have changed its name
+        setStatus("Replaced: " .. table.concat(done, ", "), colors.lime)
       else
-        setStatus("Rien a remplacer : relancer la detection", colors.red)
+        setStatus("Nothing to replace: run the detection again", colors.red)
       end
       update()
     end,
   })
   page:add(ui.Button{
-    x = W - 10, y = y, w = 10, h = 3, text = "Detecter",
+    x = W - 10, y = y, w = 10, h = 3, text = "Detect",
     onClick = function()
       local s = crafter.status
       if s.running[1] or s.queue[1] then
-        return setStatus("Attendre la fin des commandes", colors.red)
+        return setStatus("Wait for the orders to finish", colors.red)
       end
       app:show("detector")
     end,

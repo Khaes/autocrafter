@@ -1,4 +1,4 @@
--- pages/logs.lua : journal détaillé d'une commande, ou de toutes (crafter.journal)
+-- pages/logs.lua: detailed log of one order, or of all of them (crafter.journal)
 
 local ui = require("ui")
 local crafter = require("crafter")
@@ -8,8 +8,8 @@ return function(ctx)
   local app = ctx.app
   local W, H = app.w, app.h
   local page = ui.Page()
-  local order -- nil = toutes les commandes
-  local back = "list" -- page d'où les logs ont été ouverts
+  local order -- nil = every order
+  local back = "list" -- page the logs were opened from
 
   local title = page:add(ui.Label{
     x = 1, y = 1, w = W, text = "LOGS", align = "center", fg = colors.black, bg = colors.cyan,
@@ -22,15 +22,15 @@ return function(ctx)
   end
 
   local list = page:add(ui.List{
-    x = 1, y = 2, w = W, h = H - 4, emptyText = "Rien pour l'instant",
+    x = 1, y = 2, w = W, h = H - 4, emptyText = "Nothing yet",
     onScroll = updatePageLabel,
   })
 
-  -- Boutons de 3 lignes, texte en H - 1, à une colonne des bords : le cadre du moniteur
-  -- prend la couleur de fond de la case voisine et ferait dépasser le bord du bouton
+  -- 3-line buttons, text on H - 1, one column away from the edges: the monitor's frame
+  -- takes the background color of the next cell and would make the button overflow
   local y = H - 2
   page:add(ui.Button{
-    x = 2, y = y, w = 8, h = 3, text = "< Retour",
+    x = 2, y = y, w = 8, h = 3, text = "< Back",
     onClick = function() app:show(back) end,
   })
   page:add(ui.Button{
@@ -43,25 +43,25 @@ return function(ctx)
     onClick = function() list:scroll(list.h) end,
   })
   page:add(ui.Button{
-    x = 25, y = y, w = 6, h = 3, text = "Tout",
+    x = 25, y = y, w = 6, h = 3, text = "All",
     onClick = function() ctx.pages.logs.open(nil) end,
   })
 
-  -- « Annuler » une commande en file ou en cours : 1er clic « Sur ? », 2e clic dans
-  -- les CONFIRM s
+  -- "Cancel" a queued or running order: 1st click "Sure?", 2nd click within
+  -- CONFIRM s
   local CONFIRM = 5
-  local armed -- os.clock() du 1er clic
+  local armed -- os.clock() of the 1st click
   local cancelBtn
   local function disarm()
     armed = nil
-    cancelBtn:set("text", "Annuler")
+    cancelBtn:set("text", "Cancel")
   end
   cancelBtn = page:add(ui.Button{
-    x = 32, y = y, w = 7, h = 3, text = "Annuler", bg = colors.red, hidden = true,
+    x = 32, y = y, w = 7, h = 3, text = "Cancel", bg = colors.red, hidden = true,
     onClick = function()
       if not (armed and os.clock() - armed < CONFIRM) then
         armed = os.clock()
-        cancelBtn:set("text", "Sur ?")
+        cancelBtn:set("text", "Sure?")
         return
       end
       disarm()
@@ -70,7 +70,7 @@ return function(ctx)
     end,
   })
 
-  -- Recharge les lignes ; reste en bas si on y était (suivi en direct)
+  -- Reloads the lines; stays at the bottom if it was there (live follow)
   local function update()
     cancelBtn.hidden = not (order and order.ok == nil and not order.cancel)
     if armed and os.clock() - armed >= CONFIRM then disarm() end
@@ -84,10 +84,10 @@ return function(ctx)
     if app.current ~= "logs" then back = app.current or "list" end
     order = o
     disarm()
-    title:set("text", o and ("LOGS - " .. crafter.orderText(o)) or "LOGS - tout")
+    title:set("text", o and ("LOGS - " .. crafter.orderText(o)) or "LOGS - all")
     list.offset = 0
     list:setItems({})
-    -- Une commande se lit depuis le début, le journal complet depuis la fin
+    -- An order reads from the start, the full log from the end
     if o then
       update()
       list.offset = 0

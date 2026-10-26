@@ -1,52 +1,53 @@
--- config.lua : réglages du montage, lus dans DATA_DIR/config.json
+-- config.lua: setup settings, read from DATA_DIR/config.json
 --
--- Montage par défaut :
---   * Crafty Turtle (turtle + table de craft)
---   * coffre de STOCKAGE au-dessus de la turtle (ou n'importe quels
---     inventaires reliés par modem filaire)
---   * coffre TAMPON vide en dessous de la turtle (sert de sas)
---   * moniteur avancé optionnel sur un côté libre
+-- Default setup:
+--   * Crafty Turtle (turtle + crafting table)
+--   * STORAGE chest above the turtle (or any inventories connected by wired modem)
+--   * empty BUFFER chest below the turtle (used as an airlock)
+--   * optional advanced monitor on a free side
 --
--- Clés de config.json (une clé absente = nil) :
---   buffer       : coffre tampon (sous la turtle), nom réseau
---   bufferDir    : "up" | "down" | "front" ; déduit si buffer est un côté
---   storage      : inventaires de stockage ; absent = tous sauf le tampon et la sortie.
---                  À lister dès qu'il y a des machines sur le réseau (sinon depot, basin... comptent)
---   outputs      : sorties qui reçoivent l'item commandé, choisies sur l'écran principal
---                  pour chaque commande ; la première est celle par défaut. Absent = il
---                  reste dans le stockage. Noms réseau, ou { name, label } :
---                  [ "minecraft:chest_0", { "name": "minecraft:chest_30", "label": "Atelier" } ]
---                  Ancienne clé output (une seule sortie) : lue comme outputs = [ output ]
---   trash        : poubelle (chute dans la lave) : bouton « Vider » de l'écran
---                  principal ; absent = pas de bouton
---   stations     : postes Create, par machine des recettes (noms réseau des blocs)
---     timeout : secondes sans nouveau résultat avant d'abandonner (30 par défaut)
---     Bloc cassé puis reposé (basin_0 -> basin_1) : retrouvé tout seul s'il est
---     le seul de son type libre. On peut aussi écrire "type": "create:basin" sans name.
---     Plusieurs postes pour une machine : ils se partagent les lots en même temps
+-- config.json keys (a missing key = nil):
+--   buffer       : buffer chest (below the turtle), network name
+--   bufferDir    : "up" | "down" | "front"; deduced if buffer is a side
+--   storage      : storage inventories; missing = all except the buffer and the output.
+--                  List them as soon as there are machines on the network (otherwise
+--                  depots, basins... count)
+--   outputs      : outputs that receive the ordered item, chosen on the main screen for
+--                  each order; the first one is the default. Missing = it stays in
+--                  storage. Network names, or { name, label }:
+--                  [ "minecraft:chest_0", { "name": "minecraft:chest_30", "label": "Workshop" } ]
+--                  Old output key (single output): read as outputs = [ output ]
+--   trash        : trash (drop into lava): "Empty" button on the main screen;
+--                  missing = no button
+--   stations     : Create stations, per recipe machine (network names of the blocks)
+--     timeout : seconds without a new result before giving up (30 by default)
+--     Block broken and placed again (basin_0 -> basin_1): found again on its own if
+--     it is the only free one of its type. "type": "create:basin" also works without name.
+--     Several stations for one machine: they share the batches at the same time
 --       "pressing": [ { "name": "create:depot_0" }, { "name": "create:depot_1" } ]
---     turtle    : turtles ouvrières en plus de celle-ci : ID du computer et nom réseau
---                 de son coffre tampon (programme worker.lua sur l'ouvrière)
---     filling   : depot sous un spout (spout = nom du spout)
---     deploying : depot sous un deployer en mode « utiliser » (deployer = son nom)
---     mixing    : basin sous un mixer ; heat = niveau max ("heated" ou "superheated"),
---                 burner = deployer qui nourrit le blaze burner. Il fait aussi les
---                 recettes sans chaleur.
---     washing, smoking, haunting, blasting, crushing, milling, sawing : postes où les
---       items défilent, coffre d'entrée (inlet) -> machine -> coffre de sortie (output)
---       idle : entrée vide et rien de nouveau depuis idle s = passage fini (10 par défaut)
---       retries : nouveaux passages si le résultat manque (3 par défaut)
---   fluidStorage : réservoirs des fluides (un fluide par tank) ; absent = tous les fluid tanks
---   fuel         : combustibles des blaze burners, par niveau (le premier en stock est pris)
---   logFile      : journal des commandes ; absent = DATA_DIR/log.txt
---   refreshRate  : secondes entre deux relevés du stock (10 par défaut)
---   monitorScale : taille du texte sur le moniteur, 0.5 à 5 (1 par défaut)
---   monitor      : moniteur de l'écran principal ; absent = le plus grand (puis retenu)
---   screens      : autres moniteurs, choisis en les touchant (screens.lua) :
+--     turtle    : worker turtles besides this one: computer ID and network name of
+--                 its buffer chest (worker.lua program on the worker)
+--     filling   : depot under a spout (spout = name of the spout)
+--     deploying : depot under a deployer in "use" mode (deployer = its name)
+--     mixing    : basin under a mixer; heat = max level ("heated" or "superheated"),
+--                 burner = deployer that feeds the blaze burner. It also does the
+--                 recipes without heat.
+--     compacting: basin under a press, same keys as mixing
+--     washing, smoking, haunting, blasting, crushing, milling, sawing: stations where
+--       items flow, inlet chest (inlet) -> machine -> output chest (output)
+--       idle: inlet empty and nothing new for idle s = pass over (10 by default)
+--       retries: extra passes if the result is missing (3 by default)
+--   fluidStorage : fluid tanks (one fluid per tank); missing = every fluid tank
+--   fuel         : blaze burner fuels, per level (the first one in stock is used)
+--   logFile      : order log; missing = DATA_DIR/log.txt
+--   refreshRate  : seconds between two stock readings (10 by default)
+--   monitorScale : text size on the monitor, 0.5 to 5 (1 by default)
+--   monitor      : monitor of the main screen; missing = the largest (then remembered)
+--   screens      : other monitors, chosen by touching them (screens.lua):
 --                  { "monitor_1": "logs", "monitor_2": "crafts", "monitor_3": "status" }
---   screenScale  : taille du texte des autres moniteurs (0.5 par défaut)
---   sound        : son de fin de commande sur un speaker (true par défaut), bouton
---                  note de musique du titre de l'écran principal
+--   screenScale  : text size of the other monitors (0.5 by default)
+--   sound        : end-of-order sound on a speaker (true by default), music note
+--                  button in the title of the main screen
 
 local DATA_DIR = "/recipecrafter"
 local PATH = DATA_DIR .. "/config.json"
@@ -59,9 +60,9 @@ if f then
   local err
   config, err = textutils.unserializeJSON(text)
   if type(config) ~= "table" then
-    error("Configuration invalide (" .. PATH .. ") : " .. tostring(err), 0)
+    error("Invalid configuration (" .. PATH .. "): " .. tostring(err), 0)
   end
-  -- Après la lecture : unserializeJSON renvoie une nouvelle table
+  -- After reading: unserializeJSON returns a new table
   config.scanned = true
 end
 
@@ -74,8 +75,8 @@ if config.output then
   config.output = nil
 end
 
--- Modifie config.json : fn(données du fichier) les change, puis le fichier est réécrit.
--- La configuration en mémoire ne change pas (à l'appelant de le faire s'il le faut)
+-- Edits config.json: fn(file data) changes it, then the file is written back.
+-- The configuration in memory does not change (up to the caller if needed)
 function config.edit(fn)
   local data = {}
   local file = fs.open(PATH, "r")

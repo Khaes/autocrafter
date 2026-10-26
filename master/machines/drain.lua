@@ -1,6 +1,6 @@
--- machines/drain.lua : poste item drain (vidange d'items qui contiennent un fluide)
--- 1 case : l'item posé, qui devient le récipient vide ; le fluide va dans le
--- réservoir du drain, puis le computer le ramène aux réservoirs de stockage.
--- Un item à la fois (pas vérifié qu'une pile entière soit vidée).
+-- machines/drain.lua: item drain station (empties items that hold a fluid)
+-- 1 slot: the placed item, which becomes the empty container; the fluid goes into the
+-- drain's tank, then the computer moves it back to the storage tanks.
+-- One item at a time (not checked whether a whole stack gets emptied).
 
 return require("machines.container"){ input = { 1, 1 }, output = { 1, 1 }, maxBatch = 1 }

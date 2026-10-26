@@ -1,18 +1,19 @@
--- network.lua : blocs du réseau nommés dans la configuration (étape 9)
+-- network.lua: network blocks named in the configuration (step 9)
 --
--- check()  : chaque bloc de la configuration (stockage, tampon, sorties, poubelle,
---            réservoirs, blocs des postes, ouvrières), présent ou non, et les blocs du
---            réseau qu'aucun rôle n'utilise. Résultat gardé dans network.state.
--- repair() : le modem renumérote un bloc cassé puis reposé (chest_1 -> chest_3). Quand
---            un seul bloc d'un type manque et qu'un seul nouveau bloc de ce type est
---            apparu, il le remplace dans config.json et dans la configuration en mémoire.
+-- check()  : every block of the configuration (storage, buffer, outputs, trash,
+--            tanks, station blocks, workers), present or not, and the network blocks
+--            that no role uses. Result kept in network.state.
+-- repair() : the modem renumbers a block that was broken and placed again
+--            (chest_1 -> chest_3). When a single block of a type is missing and a
+--            single new block of that type appeared, it replaces it in config.json
+--            and in the configuration in memory.
 
 local config = require("config")
 local stations = require("stations")
 
 local network = {}
 
--- Champs d'un poste qui sont des noms réseau, dans l'ordre d'affichage
+-- Station fields that are network names, in display order
 local KEYS = { "name", "inlet", "output", "spout", "deployer", "burner", "buffer" }
 local SIDES = { left = true, right = true, front = true, back = true, top = true, bottom = true }
 
@@ -24,8 +25,8 @@ local function asList(v)
   return v or {}
 end
 
--- Rôles de la configuration : { role, name } ou { role, worker = ID } (ouvrière),
--- dans l'ordre d'affichage
+-- Roles of the configuration: { role, name } or { role, worker = ID } (worker),
+-- in display order
 function network.roles()
   local t, seen = {}, {}
   local function add(role, name)
@@ -34,11 +35,11 @@ function network.roles()
       t[#t + 1] = { role = role, name = name }
     end
   end
-  for _, n in ipairs(asList(config.storage)) do add("stockage", n) end
-  add("tampon", config.buffer)
-  for _, o in ipairs(stations.outputs()) do add("sortie", o.name) end
-  add("poubelle", config.trash)
-  for _, n in ipairs(asList(config.fluidStorage)) do add("fluides", n) end
+  for _, n in ipairs(asList(config.storage)) do add("storage", n) end
+  add("buffer", config.buffer)
+  for _, o in ipairs(stations.outputs()) do add("output", o.name) end
+  add("trash", config.trash)
+  for _, n in ipairs(asList(config.fluidStorage)) do add("fluids", n) end
   local machines = {}
   for m in pairs(config.stations or {}) do machines[#machines + 1] = m end
   table.sort(machines)
@@ -51,7 +52,7 @@ function network.roles()
   return t
 end
 
--- IDs des turtles du réseau : { [ID] = nom réseau }
+-- IDs of the network's turtles: { [ID] = network name }
 local function turtles()
   local t = {}
   for _, n in ipairs(peripheral.getNames()) do
@@ -63,8 +64,8 @@ local function turtles()
   return t
 end
 
--- Bloc du réseau qui pourrait avoir un rôle. Sans config.storage, tous les inventaires
--- sont du stockage ; sans config.fluidStorage, tous les fluid tanks le sont
+-- Network block that could have a role. Without config.storage, every inventory is
+-- storage; without config.fluidStorage, every fluid tank is
 local function candidate(n)
   if peripheral.hasType(n, "turtle") then return true end
   if peripheral.hasType(n, "inventory") then return config.storage ~= nil end
@@ -72,8 +73,8 @@ local function candidate(n)
   return peripheral.hasType(n, "fluid_storage")
 end
 
--- state = { rows = rôles avec present, new = noms des blocs sans rôle,
---           missing = nombre de blocs absents, missingSet = { [nom] = true } }
+-- state = { rows = roles with present, new = names of the blocks without a role,
+--           missing = number of missing blocks, missingSet = { [name] = true } }
 function network.check()
   local ids = turtles()
   local rows, used, missingSet, missing = network.roles(), {}, {}, 0
@@ -87,7 +88,7 @@ function network.check()
     end
     if not r.present then
       missing = missing + 1
-      missingSet[r.name or ("ouvriere " .. r.worker)] = true
+      missingSet[r.name or ("worker " .. r.worker)] = true
     end
   end
   local new = {}
@@ -99,7 +100,7 @@ function network.check()
   return network.state
 end
 
--- Remplace les noms de `map` (ancien -> nouveau) partout dans la table t
+-- Replaces the names of `map` (old -> new) everywhere in table t
 local function rename(t, map, seen)
   seen = seen or {}
   if seen[t] then return end
@@ -113,7 +114,7 @@ local function rename(t, map, seen)
   end
 end
 
--- Remplacements possibles : { [ancien] = nouveau }, un par type de bloc au plus
+-- Possible replacements: { [old] = new }, at most one per block type
 function network.repairs()
   local state = network.check()
   local byKind = {}
@@ -136,7 +137,7 @@ function network.repairs()
   return map
 end
 
--- Applique network.repairs() ; renvoie les remplacements faits (« chest_1 -> chest_3 »)
+-- Applies network.repairs(); returns the replacements made ("chest_1 -> chest_3")
 function network.repair()
   local map = network.repairs()
   local done = {}

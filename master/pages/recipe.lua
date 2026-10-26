@@ -1,8 +1,8 @@
--- pages/recipe.lua : recettes d'un item que l'atelier sait faire (celles de recipes.db
--- d'abord), une à la fois ; < > pour passer de l'une à l'autre quand il y en a
--- plusieurs. « AJOUTER » met la recette dans la commande de l'écran principal ;
--- ouverte depuis une ligne de la commande, la page la modifie ou la retire. La
--- quantité se règle aussi au clavier (flèches, Page préc./suiv., chiffres, Entrée).
+-- pages/recipe.lua: recipes of an item the workshop can make (those of recipes.db
+-- first), one at a time; < > to go from one to the other when there are several.
+-- "ADD" puts the recipe into the order of the main screen; opened from a line of the
+-- order, the page changes or removes it. The quantity can also be set with the
+-- keyboard (arrows, Page Up/Down, digits, Enter).
 
 local ui = require("ui")
 local storage = require("storage")
@@ -17,7 +17,7 @@ return function(ctx)
   local page = ui.Page()
   local item, choices, index = nil, {}, 1
   local current, qty = nil, 1
-  local editing -- ligne de la commande modifiée, sinon nil
+  local editing -- line of the order being changed, else nil
 
   local title = page:add(ui.Label{
     x = 1, y = 1, w = W, text = "", align = "center", fg = colors.black, bg = colors.yellow,
@@ -29,7 +29,7 @@ return function(ctx)
     status:set("text", text)
   end
 
-  -- Grille 3x3 + résultat
+  -- 3x3 grid + result
   local cw = math.max(4, math.min(12, math.floor((W - 18) / 3)))
   local grid = page:add(ui.CraftGrid{
     x = 2, y = 3, cellW = cw, rowGap = 1,
@@ -37,7 +37,7 @@ return function(ctx)
       if not cell then return end
       local input = recipes.displayGrid(current)[i]
       local need = recipes.needs(current)[input] * qty
-      setStatus(("%s : %d/%d"):format(name(input), storage.count(input), need), colors.lightGray)
+      setStatus(("%s: %d/%d"):format(name(input), storage.count(input), need), colors.lightGray)
     end,
   })
 
@@ -46,7 +46,7 @@ return function(ctx)
   page:add(ui.Label{ x = gx, y = 5, text = "=>" })
   local outLabel = page:add(ui.Label{ x = gx + 3, y = 5, w = W - gx - 2, text = "", fg = colors.yellow })
   local maxLabel = page:add(ui.Label{ x = gx, y = 7, w = W - gx + 1, text = "" })
-  -- Rangée de quantité centrée : -10 -1 [x1] +1 +10 Max
+  -- Centered quantity row: -10 -1 [x1] +1 +10 Max
   local qx = math.floor((W - 33) / 2) + 1
   local qtyLabel = page:add(ui.Label{ x = qx + 9, y = 9, w = 9, text = "", align = "center" })
 
@@ -61,7 +61,7 @@ return function(ctx)
       title:set("text", name(item))
       outLabel:set("text", ""); stockLabel:set("text", "Stock: " .. storage.count(item))
       maxLabel:set("text", ""); qtyLabel:set("text", "")
-      setStatus("Aucune recette pour les machines de l'atelier", colors.red)
+      setStatus("No recipe for the workshop's machines", colors.red)
       return
     end
     local needs = recipes.needs(r)
@@ -82,13 +82,13 @@ return function(ctx)
     title:set("text", name(r.output.name) .. (label and (" [" .. label .. "]") or ""))
     outLabel:set("text", r.output.count .. "x " .. name(r.output.name))
     stockLabel:set("text", "Stock: " .. storage.count(r.output.name))
-    maxLabel:set("text", "Faisable: x" .. recipes.craftable(r, storage.stock))
+    maxLabel:set("text", "Possible: x" .. recipes.craftable(r, storage.stock))
     local s = "x" .. qty
     if r.output.count > 1 then s = s .. " =" .. qty * r.output.count end
     qtyLabel:set("text", s)
   end
 
-  -- Quantité
+  -- Quantity
   local function setQty(v)
     if not current then return end
     qty = math.max(1, math.min(9999, v))
@@ -106,14 +106,14 @@ return function(ctx)
     end,
   })
 
-  -- Barre du bas, centrée : Retour, AJOUTER (ou VALIDER), et Retirer en modification
+  -- Bottom bar, centered: Back, ADD (or SAVE), and Remove when changing a line
   local backBtn = page:add(ui.Button{
-    x = 1, y = H - 2, w = 10, h = 3, text = "< Retour",
+    x = 1, y = H - 2, w = 10, h = 3, text = "< Back",
     onClick = function() app:show("list") end,
   })
 
   local addBtn = page:add(ui.Button{
-    x = 1, y = H - 2, w = 11, h = 3, text = "AJOUTER",
+    x = 1, y = H - 2, w = 11, h = 3, text = "ADD",
     bg = colors.green, fg = colors.black,
     onClick = function()
       if not current then return end
@@ -128,18 +128,18 @@ return function(ctx)
   })
 
   local removeBtn = page:add(ui.Button{
-    x = 1, y = H - 2, w = 9, h = 3, text = "Retirer", bg = colors.red, hidden = true,
+    x = 1, y = H - 2, w = 9, h = 3, text = "Remove", bg = colors.red, hidden = true,
     onClick = function()
       ctx.pages.list.order.remove(editing)
       app:show("list")
     end,
   })
 
-  -- Clavier : ← → ±1, ↑ ↓ ±64, Page préc./suiv. ±10, Entrée = AJOUTER. Les chiffres
-  -- tapent la quantité (le 1er remplace, les suivants s'ajoutent), Retour efface
+  -- Keyboard: left / right +-1, up / down +-64, Page Up/Down +-10, Enter = ADD. Digits
+  -- type the quantity (the 1st replaces, the next ones are appended), Backspace erases
   local STEPS = { [keys.right] = 1, [keys.left] = -1, [keys.up] = 64, [keys.down] = -64,
                   [keys.pageUp] = 10, [keys.pageDown] = -10 }
-  local typed = "" -- chiffres tapés depuis la dernière flèche ou l'ouverture
+  local typed = "" -- digits typed since the last arrow or the opening
   page.focus = {
     key = function(_, k)
       if STEPS[k] then
@@ -159,7 +159,7 @@ return function(ctx)
     end,
   }
 
-  -- Recette précédente / suivante quand l'item en a plusieurs (rangée centrée)
+  -- Previous / next recipe when the item has several (centered row)
   local function choose(i)
     if not choices[1] then return end
     index = (i - 1) % #choices + 1
@@ -174,8 +174,8 @@ return function(ctx)
   }
   navLabel = page:add(ui.Label{ x = nx + 4, y = 12, w = 7, text = "", align = "center" })
 
-  -- Recettes de `name` que l'atelier peut faire (machine connue et poste configuré),
-  -- demandées au moment de l'ouverture
+  -- Recipes of `name` the workshop can make (known machine and configured station),
+  -- asked for when the page opens
   local function load(itemName)
     item = itemName
     storage.scan()
@@ -193,8 +193,8 @@ return function(ctx)
   local function setEditing(line)
     editing = line
     removeBtn.hidden = not line
-    addBtn:set("text", line and "VALIDER" or "AJOUTER")
-    -- Recentre les boutons visibles
+    addBtn:set("text", line and "SAVE" or "ADD")
+    -- Centers the visible buttons again
     local shown = { backBtn, addBtn, line and removeBtn or nil }
     local total = -1
     for _, b in ipairs(shown) do total = total + b.w + 1 end
@@ -212,7 +212,7 @@ return function(ctx)
     app:show("recipe")
   end
 
-  -- Modifier une ligne de la commande : sa recette et sa quantité
+  -- Change a line of the order: its recipe and its quantity
   local function edit(line)
     load(line.recipe.output.name)
     index = nil

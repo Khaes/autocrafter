@@ -1,17 +1,17 @@
--- remote.lua : ordres aux turtles ouvrières par rednet (réseau filaire)
+-- remote.lua: orders to the worker turtles over rednet (wired network)
 --
--- send() envoie un ordre et renvoie son numéro ; la réponse de l'ouvrière est gardée
--- par listen(), qui tourne en parallèle de l'interface et des crafts (le sleep de
--- l'ordonnanceur jetterait les messages reçus pendant qu'il attend) ; take() la rend.
--- Ordre : { kind = "craft", job, cells = { cases de la grille }, count }
--- Réponse : { job, ok, err }
+-- send() sends an order and returns its number; the worker's reply is kept by
+-- listen(), which runs alongside the UI and the crafts (the scheduler's sleep would
+-- drop messages received while it waits); take() hands it back.
+-- Order: { kind = "craft", job, cells = { grid slots }, count }
+-- Reply: { job, ok, err }
 
 local remote = { PROTOCOL = "autocrafter" }
 
-local replies = {} -- numéro d'ordre -> réponse
+local replies = {} -- order number -> reply
 local counter = 0
 
--- Ouvre tous les modems ; false s'il n'y en a aucun
+-- Opens every modem; false if there is none
 function remote.open()
   peripheral.find("modem", rednet.open)
   return rednet.isOpen()
@@ -19,8 +19,8 @@ end
 
 function remote.isOpen() return rednet.isOpen() end
 
--- Numéros uniques même après un redémarrage : une réponse en retard d'avant le
--- redémarrage ne peut pas être prise pour celle d'un nouvel ordre
+-- Numbers stay unique across reboots: a late reply from before a reboot cannot be
+-- mistaken for the reply to a new order
 function remote.send(computerId, msg)
   counter = counter + 1
   msg.job = ("%d-%d"):format(os.epoch("utc"), counter)
@@ -28,7 +28,7 @@ function remote.send(computerId, msg)
   return msg.job
 end
 
--- Réponse à l'ordre `job` venue de `computerId`, ou nil si elle n'est pas arrivée
+-- Reply to order `job` from `computerId`, or nil if it has not arrived
 function remote.take(job, computerId)
   local r = replies[job]
   if r and r.from == computerId then

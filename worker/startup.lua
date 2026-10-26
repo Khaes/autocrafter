@@ -1,2 +1,2 @@
--- startup.lua : lance l'ouvrière au démarrage de la turtle
+-- startup.lua: starts the worker when the turtle boots
 shell.run("/worker.lua")

@@ -1,18 +1,18 @@
--- stations.lua : postes de config.stations, regroupés par machine
--- Une machine a un poste { name = ... } ou une liste de postes { { name = ... }, ... }
--- (postes `flow` : { inlet = ..., output = ... } à la place de name)
+-- stations.lua: stations from config.stations, grouped by machine
+-- A machine has one station { name = ... } or a list of stations { { name = ... }, ... }
+-- (`flow` stations: { inlet = ..., output = ... } instead of name)
 
 local config = require("config")
 local burner = require("machines.burner")
 
 local stations = {}
 
--- La turtle elle-même : un seul craft à la fois. Les ouvrières (étape 7) sont des
--- postes « turtle » de plus : config.stations.turtle = { { worker = ID, buffer = ... } }
+-- The turtle itself: one craft at a time. Workers (step 7) are extra "turtle"
+-- stations: config.stations.turtle = { { worker = ID, buffer = ... } }
 local TURTLE = { name = "turtle" }
 
--- Postes d'une machine, toujours en liste ; une liste vide ({} ou [] dans le JSON)
--- veut dire aucun poste, pas un poste sans nom
+-- Stations of a machine, always as a list; an empty list ({} or [] in the JSON)
+-- means no station, not a station without a name
 local function configured(machineName)
   local s = config.stations and config.stations[machineName]
   if not s or next(s) == nil then return {} end
@@ -20,8 +20,8 @@ local function configured(machineName)
   return s
 end
 
--- Postes qui peuvent faire les recettes de `machineName` (liste vide si aucun) ;
--- avec `heat`, seulement ceux qui chauffent assez (un poste superheated fait aussi heated)
+-- Stations that can make the recipes of `machineName` (empty list if none);
+-- with `heat`, only those that get hot enough (a superheated station also does heated)
 function stations.pool(machineName, heat)
   if machineName == "turtle" then return { TURTLE, table.unpack(configured("turtle")) } end
   local t = {}
@@ -31,11 +31,11 @@ function stations.pool(machineName, heat)
   return t
 end
 
--- Postes de config.stations pour `machineName`, toujours en liste (sans la turtle principale)
+-- Stations of config.stations for `machineName`, always as a list (without the main turtle)
 stations.list = configured
 
--- Sorties possibles d'une commande : config.outputs (noms réseau, ou { name, label }).
--- Liste de { name, label }, la sortie par défaut en premier
+-- Possible outputs of an order: config.outputs (network names, or { name, label }).
+-- List of { name, label }, the default output first
 function stations.outputs()
   local t = {}
   for _, o in ipairs(config.outputs or {}) do
@@ -45,13 +45,13 @@ function stations.outputs()
   return t
 end
 
--- Nom de la sortie par défaut (la première), nil s'il n'y en a pas
+-- Name of the default output (the first one), nil if there is none
 function stations.defaultOutput()
   local first = stations.outputs()[1]
   return first and first.name
 end
 
--- Tous les postes configurés, toutes machines confondues
+-- Every configured station, all machines together
 function stations.all()
   local t = {}
   for machineName in pairs(config.stations or {}) do

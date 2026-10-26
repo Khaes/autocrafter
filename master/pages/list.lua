@@ -1,10 +1,10 @@
--- pages/list.lua : écran principal. Sans recherche, la commande en préparation (les
--- recettes ajoutées depuis la page recette) et le bouton CRAFTER qui la lance ; avec
--- une recherche, les items trouvés en tuiles, une page à la fois (comme JEI). CRAFTER
--- ouvre le suivi des crafts (pages/crafts.lua). Avec le mod Recipe API, la liste et le
--- total viennent du jeu ; seuls les items que l'atelier sait faire (machine avec un
--- poste) sont montrés. La sortie de la commande se choisit à droite de son titre ;
--- « Vider » envoie cette sortie à la poubelle (config.trash). « Postes » : pages/postes.lua.
+-- pages/list.lua: main screen. Without a search, the order being prepared (the
+-- recipes added from the recipe page) and the CRAFT button that starts it; with a
+-- search, the items found as tiles, one page at a time (like JEI). CRAFT opens the
+-- craft tracking (pages/crafts.lua). The list and the total come from the AutoCrafter
+-- Link mod; only the items the workshop can make (machine with a station)
+-- are shown. The output of the order is chosen under the list; "Empty" sends that
+-- output to the trash (config.trash). "Stations": pages/stations.lua.
 
 local config = require("config")
 local ui = require("ui")
@@ -20,33 +20,33 @@ return function(ctx)
   local W, H = app.w, app.h
   local page = ui.Page()
   local name = recipes.displayName
-  local lines = {} -- commande en préparation : { recipe, qty }
-  local notice -- message sur la ligne de titre de la commande : { text, ok, lost, expires }
-  local NOTICE_TIME = 60 -- secondes d'affichage d'un bloc absent
+  local lines = {} -- order being prepared: { recipe, qty }
+  local notice -- message on the title line of the order: { text, ok, lost, expires }
+  local NOTICE_TIME = 60 -- seconds a missing block stays displayed
 
-  -- Page des postes du réseau, en rouge quand un bloc de la configuration manque
-  local postesBtn = page:add(ui.Button{
-    x = 1, y = 1, w = 8, h = 1, text = "Postes",
-    onClick = function() app:show("postes") end,
+  -- Page of the network stations, red when a block of the configuration is missing
+  local stationsBtn = page:add(ui.Button{
+    x = 1, y = 1, w = 8, h = 1, text = "Stations",
+    onClick = function() app:show("stations") end,
   })
   page:add(ui.Label{
-    x = 9, y = 1, w = W - 12, text = "AUTO-CRAFTEUR",
+    x = 9, y = 1, w = W - 12, text = "AUTO-CRAFTER",
     align = "center", fg = colors.black, bg = colors.cyan,
   })
-  local function updatePostes()
+  local function updateStations()
     local state = network.state
-    postesBtn:set("bg", state and state.missing > 0 and colors.red or colors.blue)
+    stationsBtn:set("bg", state and state.missing > 0 and colors.red or colors.blue)
   end
-  -- Son de fin de commande (sound.lua) : vert = actif ; remis, il joue l'accord de fin
+  -- End-of-order sound (sound.lua): green = on; turned back on, it plays the end chord
   local soundBtn, updateOrder
   soundBtn = page:add(ui.Button{
-    x = W - 3, y = 1, w = 3, h = 1, text = "\14", -- note de musique de la police CC
+    x = W - 3, y = 1, w = 3, h = 1, text = "\14", -- music note of the CC font
     bg = sound.enabled and colors.green or colors.gray,
     onClick = function()
       sound.toggle()
       soundBtn:set("bg", sound.enabled and colors.green or colors.gray)
       if not sound.speaker() then
-        notice = { text = "Pas de haut-parleur sur le reseau" }
+        notice = { text = "No speaker on the network" }
         updateOrder()
       elseif sound.enabled then
         sound.play("done")
@@ -59,7 +59,7 @@ return function(ctx)
   })
 
   local search = page:add(ui.TextInput{
-    x = 1, y = 2, w = W - 1, placeholder = "Rechercher un item...",
+    x = 1, y = 2, w = W - 1, placeholder = "Search an item...",
   })
   page:add(ui.Button{
     x = W, y = 2, w = 1, h = 1, text = "x", bg = colors.lightGray, fg = colors.black,
@@ -67,23 +67,23 @@ return function(ctx)
   })
   page.focus = search
 
-  -- Résultats de la recherche : seule la page affichée est demandée au mod
+  -- Search results: only the displayed page is asked from the mod
   local grid = page:add(ui.Grid{
     x = 1, y = 3, w = W, h = H - 5, altBg = colors.black,
-    emptyText = "Aucun item",
+    emptyText = "No item",
     onSelect = function(_, tile) ctx.pages.recipe.open(tile.item) end,
   })
   local perPage = grid.cols * grid.h
   local pageNo, pages = 0, 1
 
-  -- Commande en préparation (affichée quand la recherche est vide)
+  -- Order being prepared (shown when the search is empty)
   local orderTitle = page:add(ui.Label{
     x = 1, y = 3, w = W, text = "", align = "center", fg = colors.black, bg = colors.lightGray,
   })
 
-  -- Sortie de la commande, sous la liste : un clic passe à la suivante (stations.outputs),
-  -- puis au stockage (le produit y reste). « Vider » vide la sortie choisie
-  local chosen -- nom de la sortie choisie, false = stockage, nil = la première
+  -- Output of the order, under the list: a click goes to the next one (stations.outputs),
+  -- then to the storage (the product stays there). "Empty" empties the chosen output
+  local chosen -- name of the chosen output, false = storage, nil = the first one
   local function selectedOutput()
     local outs = stations.outputs()
     if chosen == false then return nil, outs end
@@ -97,24 +97,24 @@ return function(ctx)
   })
   local orderList = page:add(ui.List{
     x = 1, y = 4, w = W, h = H - 6, altBg = colors.gray,
-    emptyText = "Cherche un item a ajouter",
+    emptyText = "Search an item to add",
     onSelect = function(_, it) ctx.pages.recipe.edit(it.line) end,
   })
 
-  -- Machines qui ont un poste (la turtle en a toujours un)
+  -- Machines that have a station (the turtle always has one)
   local machines = {}
   for m in pairs(crafter.machines) do
     if stations.pool(m)[1] then machines[m] = true end
   end
 
-  -- Barre du bas : pagination (recherche) ou Crafts + Vider + Logs + Scan + CRAFTER (commande)
+  -- Bottom bar: paging (search) or Crafts + Empty + Logs + Scan + CRAFT (order)
   local prev, pageLabel, nextBtn, craftsBtn, trashBtn, craftBtn, scanBtn
-  local CONFIRM = 5 -- secondes pour confirmer « Vider » par un 2e clic
-  local armed -- os.clock() du 1er clic sur « Vider »
+  local CONFIRM = 5 -- seconds to confirm "Empty" with a 2nd click
+  local armed -- os.clock() of the 1st click on "Empty"
 
   local function disarm()
     armed = nil
-    trashBtn:set("text", "Vider")
+    trashBtn:set("text", "Empty")
     trashBtn:set("bg", colors.blue)
   end
 
@@ -125,14 +125,14 @@ return function(ctx)
     end
     orderList:setItems(items)
     local out, outs = selectedOutput()
-    outBtn.hidden = orderTitle.hidden or not outs[2] -- une seule sortie : rien à choisir
-    outBtn:set("text", "Sortie : " .. (out and out.label or "stockage") .. "  (changer)")
+    outBtn.hidden = orderTitle.hidden or not outs[2] -- a single output: nothing to choose
+    outBtn:set("text", "Output: " .. (out and out.label or "storage") .. "  (change)")
     orderList.h = outBtn.hidden and H - 6 or H - 7
     if notice then
       orderTitle:set("text", notice.text)
       orderTitle:set("bg", notice.ok and colors.lime or colors.red)
     else
-      orderTitle:set("text", #lines > 0 and ("Commande (" .. #lines .. ")") or "Commande vide")
+      orderTitle:set("text", #lines > 0 and ("Order (" .. #lines .. ")") or "Empty order")
       orderTitle:set("bg", colors.lightGray)
     end
     craftBtn:set("bg", #lines > 0 and colors.green or colors.gray)
@@ -146,7 +146,7 @@ return function(ctx)
     craftsBtn.hidden, craftBtn.hidden, scanBtn.hidden = searching, searching, searching
     trashBtn.hidden = searching or not (config.trash and selectedOutput())
     disarm()
-    updatePostes()
+    updateStations()
     if searching then
       local total, items = recipes.listItems(search.value, pageNo * perPage, perPage, machines)
       pages = math.max(1, math.ceil(total / perPage))
@@ -157,7 +157,7 @@ return function(ctx)
     else
       updateOrder()
     end
-    -- Le focus ne reste pas sur des tuiles ou une commande cachées ou vides
+    -- The focus does not stay on hidden or empty tiles or order
     local f = page.focus
     if f ~= search and (f.hidden or not f.items[1]) then page.focus = search end
   end
@@ -167,8 +167,8 @@ return function(ctx)
     refresh()
   end
 
-  -- Boutons de 3 lignes, texte en H - 1, à une colonne des bords : le cadre du moniteur
-  -- prend la couleur de fond de la case voisine et ferait dépasser le bord du bouton
+  -- 3-line buttons, text on H - 1, one column away from the edges: the monitor's frame
+  -- takes the background color of the next cell and would make the button overflow
   local y = H - 2
   prev = page:add(ui.Button{
     x = 2, y = y, w = 4, h = 3, text = "<",
@@ -183,30 +183,30 @@ return function(ctx)
     x = 2, y = y, w = 9, h = 3, text = "Crafts",
     onClick = function() app:show("crafts") end,
   })
-  -- 1er clic : « Sur ? » en rouge ; 2e clic dans les CONFIRM s : tout part à la lave
+  -- 1st click: "Sure?" in red; 2nd click within CONFIRM s: everything goes to the lava
   trashBtn = page:add(ui.Button{
-    x = 12, y = y, w = 6, h = 3, text = "Vider",
+    x = 12, y = y, w = 6, h = 3, text = "Empty",
     onClick = function()
       if not (armed and os.clock() - armed < CONFIRM) then
         armed = os.clock()
-        trashBtn:set("text", "Sur ?")
+        trashBtn:set("text", "Sure?")
         trashBtn:set("bg", colors.red)
         return
       end
       disarm()
       local out = selectedOutput()
       if not (out and peripheral.isPresent(out.name) and peripheral.isPresent(config.trash)) then
-        notice = { text = "Sortie ou poubelle introuvable" }
+        notice = { text = "Output or trash not found" }
       else
         local moved, left = storage.moveAll(out.name, config.trash)
-        notice = left > 0 and { text = ("Poubelle pleine : %d items restent"):format(left) }
-                 or { text = ("Sortie videe : %d items"):format(moved), ok = true }
+        notice = left > 0 and { text = ("Trash full: %d items left"):format(left) }
+                 or { text = ("Output emptied: %d items"):format(moved), ok = true }
       end
       updateOrder()
     end,
   })
   craftBtn = page:add(ui.Button{
-    x = W - 7, y = y, w = 7, h = 3, text = "CRAFTER", bg = colors.gray, fg = colors.black,
+    x = W - 7, y = y, w = 7, h = 3, text = "CRAFT", bg = colors.gray, fg = colors.black,
     onClick = function()
       if not lines[1] then return end
       local out = selectedOutput()
@@ -218,7 +218,7 @@ return function(ctx)
     end,
   })
 
-  -- Sortie suivante, puis le stockage, puis la première
+  -- Next output, then the storage, then the first one
   outBtn.onClick = function()
     local out, outs = selectedOutput()
     if not out then
@@ -236,10 +236,10 @@ return function(ctx)
     goTo(0)
   end
 
-  -- Clavier : ↓ depuis la recherche passe sur les tuiles (recherche) ou sur la commande
-  -- (sans recherche) ; ↑ depuis la 1re ligne y revient ; une lettre ou Retour aussi.
-  -- Tuiles : ← / → aux bords changent de page. Commande : ← / → quantité ±1, Page ±10
-  local typeKey = search.key -- celle de TextInput (Retour arrière)
+  -- Keyboard: down from the search goes to the tiles (search) or to the order (no
+  -- search); up from the 1st line comes back; so does a letter or Backspace.
+  -- Tiles: left / right at the edges change page. Order: left / right quantity +-1, Page +-10
+  local typeKey = search.key -- the one of TextInput (Backspace)
   function search:key(k)
     if k == keys.down and not grid.hidden and grid.items[1] then
       grid:select(1)
@@ -297,25 +297,25 @@ return function(ctx)
     x = 19, y = y, w = 6, h = 3, text = "Logs",
     onClick = function() ctx.pages.logs.open(nil) end,
   })
-  -- Relance la détection du réseau (pages/detector.lua demande : tout, ou en plus)
+  -- Runs the network detection again (pages/detector.lua asks: everything, or additional)
   scanBtn = page:add(ui.Button{
     x = 26, y = y, w = 5, h = 3, text = "Scan",
     onClick = function()
       local s = crafter.status
       if s.running[1] or s.queue[1] then
-        notice = { text = "Scan : attendre la fin des commandes" }
+        notice = { text = "Scan: wait for the orders to finish" }
         return updateOrder()
       end
       app:show("detector")
     end,
   })
 
-  -- Commande en préparation, utilisée par la page recette
+  -- Order being prepared, used by the recipe page
   local order = {}
 
-  -- Ajoute `qty` crafts de `recipe` ; vide la recherche pour revenir sur la commande.
-  -- Une ligne par item : si l'item y est déjà (même par une autre recette), sa ligne
-  -- garde sa recette et reçoit au moins autant d'items en plus
+  -- Adds `qty` crafts of `recipe`; clears the search to come back to the order.
+  -- One line per item: if the item is already there (even with another recipe), its
+  -- line keeps its recipe and gets at least as many extra items
   function order.add(recipe, qty)
     for _, l in ipairs(lines) do
       if l.recipe.output.name == recipe.output.name then
@@ -335,15 +335,15 @@ return function(ctx)
     end
   end
 
-  -- Recette reçue du bouton « + » de JEI (tablette) : 1 craft, ou une pile avec shift
+  -- Recipe received from the JEI "+" button (tablet): 1 craft, or a stack with shift
   function order.fromJei(id, max)
     storage.scan()
     local r = recipes.get(id, storage.stock)
     local m = r and recipes.machine(r)
     if not r then
-      notice = { text = "JEI : recette non geree" }
+      notice = { text = "JEI: recipe not supported" }
     elseif not (crafter.machines[m] and stations.pool(m)[1]) then
-      notice = { text = "JEI : pas de poste " .. (recipes.machineLabel(r) or m) }
+      notice = { text = "JEI: no station " .. (recipes.machineLabel(r) or m) }
     else
       order.add(r, max and math.max(1, math.floor(64 / r.output.count)) or 1)
       notice = { text = "+ " .. name(r.output.name), ok = true }
@@ -355,15 +355,15 @@ return function(ctx)
 
   page.onShow = refresh
 
-  -- Réseau relu (network.check) : bouton Postes en rouge, et message si des blocs de la
-  -- configuration viennent de disparaître (`lost` : leurs noms) ; `text` : autre message.
-  -- Le message « Absent » perd les blocs revenus, et s'efface quand il n'en reste plus
-  -- ou après NOTICE_TIME s (tick) ; le journal garde la trace (main.lua)
+  -- Network read again (network.check): Stations button in red, and a message if blocks
+  -- of the configuration just disappeared (`lost`: their names); `text`: other message.
+  -- The "Missing" message drops the blocks that came back, and is cleared when none is
+  -- left or after NOTICE_TIME s (tick); the log keeps track (main.lua)
   local function absentText(set)
     local names = {}
     for n in pairs(set) do names[#names + 1] = (n:gsub("^.-:", "")) end
     table.sort(names)
-    return names[1] and ("Absent : " .. table.concat(names, ", "))
+    return names[1] and ("Missing: " .. table.concat(names, ", "))
   end
   local function onNetwork(lost, text)
     if notice and notice.lost then
@@ -380,14 +380,14 @@ return function(ctx)
       notice = { text = absentText(set), lost = set, expires = os.clock() + NOTICE_TIME }
     end
     if text then notice = { text = text } end
-    if app.current == "list" then refresh() else updatePostes() end
+    if app.current == "list" then refresh() else updateStations() end
   end
 
   return {
     page = page,
     order = order,
     onNetwork = onNetwork,
-    -- « Sur ? » ne reste pas affiché après le délai de confirmation
+    -- "Sure?" does not stay displayed after the confirmation delay
     tick = function()
       if armed and os.clock() - armed >= CONFIRM then disarm() end
       if notice and notice.expires and os.clock() >= notice.expires then

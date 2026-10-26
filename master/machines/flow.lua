@@ -1,16 +1,16 @@
--- machines/flow.lua : postes où les items défilent (ventilateurs, broyeurs, millstone,
--- scie). Le computer verse les ingrédients dans le coffre d'entrée, Create les fait
--- passer dans la machine, les résultats arrivent dans le coffre de sortie.
+-- machines/flow.lua: stations where items flow through (fans, crushers, millstone,
+-- saw). The computer pours the ingredients into the inlet chest, Create moves them
+-- through the machine, and the results arrive in the output chest.
 --
--- Un poste (config.stations) :
+-- A station (config.stations):
 --   { inlet = "minecraft:chest_3", output = "minecraft:chest_2",
 --     timeout = 30, idle = 10, retries = 3 }
---   timeout : secondes sans aucun mouvement (entrée ou sortie) avant d'abandonner
---   idle    : entrée vide et plus rien n'arrive depuis `idle` s = le passage est fini
---   retries : nouveaux passages si le résultat manque (sortie aléatoire, item passé
---             sans être traité)
--- Recette : `chance` = probabilité du résultat par craft (gravier -> silex : 0.25).
--- Tout ce qui arrive en sortie (sous-produits, items non traités) va au stockage.
+--   timeout: seconds without any movement (inlet or output) before giving up
+--   idle   : inlet empty and nothing new for `idle` s = the pass is over
+--   retries: extra passes if results are missing (random output, item that went
+--            through without being processed)
+-- Recipe: `chance` = probability of the result per craft (gravel -> flint: 0.25).
+-- Everything that reaches the output (by-products, unprocessed items) goes to storage.
 
 local storage = require("storage")
 local recipes = require("recipes")
@@ -27,7 +27,7 @@ local function contents(inv)
   return total, byName
 end
 
--- Ramène tout l'inventaire au stockage ; false si une case n'a pas pu être vidée
+-- Moves the whole inventory back to storage; false if a slot could not be emptied
 local function empty(inv)
   for slot, it in pairs(peripheral.wrap(inv).list()) do
     if storage.import(inv, slot) < it.count then return false end
@@ -35,19 +35,19 @@ local function empty(inv)
   return true
 end
 
--- Verse dans l'entrée de quoi faire `crafts` crafts ; renvoie nil ou une erreur
+-- Pours into the inlet enough for `crafts` crafts; returns nil or an error
 local function feed(station, recipe, crafts)
   for item, perCraft in pairs(recipes.needs(recipe)) do
     local want = perCraft * crafts
     local sent = storage.export(item, want, station.inlet)
     if sent < want then
-      return ("Impossible d'envoyer %d %s vers %s (%d envoyes)"):format(
+      return ("Cannot send %d %s to %s (%d sent)"):format(
         want, name(item), station.inlet, sent)
     end
   end
 end
 
--- Crafts à lancer pour obtenir `items` résultats en moyenne
+-- Crafts to run to get `items` results on average
 local function craftsFor(recipe, items)
   return math.ceil(items / recipe.output.count / recipes.chance(recipe))
 end
@@ -57,19 +57,19 @@ function machine.batchSize(station, recipe)
   for item, perCraft in pairs(recipes.needs(recipe)) do
     batch = math.min(batch, math.floor(storage.maxStack(item) / perCraft))
   end
-  -- Le lot compte en résultats : avec chance 0.25, 16 résultats = 64 ingrédients
+  -- The batch counts results: with chance 0.25, 16 results = 64 ingredients
   return math.max(1, math.floor(batch * recipes.chance(recipe)))
 end
 
 function machine.start(station, recipe, count)
   for _, inv in ipairs({ station.inlet, station.output }) do
     if not inv or not peripheral.isPresent(inv) then
-      return "Poste introuvable : " .. tostring(inv)
+      return "Station not found: " .. tostring(inv)
     end
   end
-  -- Restes d'un passage précédent (items arrivés en retard, essai à la main)
+  -- Leftovers of a previous pass (late items, manual try)
   if not empty(station.inlet) or not empty(station.output) then
-    return "Poste occupe : " .. station.output
+    return "Station busy: " .. station.output
   end
   local want = recipe.output.count * count
   local err = feed(station, recipe, craftsFor(recipe, want))
@@ -81,9 +81,9 @@ function machine.start(station, recipe, count)
     recipe = recipe,
     item = recipe.output.name,
     want = want,
-    got = 0,         -- résultats déjà rangés (passages précédents)
+    got = 0,         -- results already stored (previous passes)
     tries = 0,
-    last = nil,      -- dernier état vu de l'entrée et de la sortie
+    last = nil,      -- last seen state of the inlet and the output
     since = os.clock(),
   }
 end
@@ -96,9 +96,9 @@ function machine.poll(station)
 
   if have >= job.want then
     station.job = nil
-    -- Résultat, sous-produits et ingrédients en trop retournent au stockage
+    -- Result, by-products and extra ingredients go back to storage
     if not empty(station.output) or not empty(station.inlet) then
-      return nil, "Stockage plein"
+      return nil, "Storage full"
     end
     return "done"
   end
@@ -113,24 +113,24 @@ function machine.poll(station)
   if inTotal > 0 then
     if quiet > (station.timeout or 30) then
       station.job = nil
-      return nil, ("Poste bloque : %s (%d/%d %s)"):format(
+      return nil, ("Station stuck: %s (%d/%d %s)"):format(
         station.inlet, have, job.want, name(job.item))
     end
     return "running"
   end
   if quiet <= (station.idle or 10) then return "running" end
 
-  -- Entrée vide, plus rien n'arrive, il manque des résultats : nouveau passage
+  -- Inlet empty, nothing arrives any more, results are missing: new pass
   if job.tries >= (station.retries or 3) then
     station.job = nil
     empty(station.output)
-    return nil, ("Pas assez de %s : %d/%d apres %d passages"):format(
+    return nil, ("Not enough %s: %d/%d after %d passes"):format(
       name(job.item), have, job.want, job.tries + 1)
   end
   job.got = have
   if not empty(station.output) then
     station.job = nil
-    return nil, "Stockage plein"
+    return nil, "Storage full"
   end
   job.tries = job.tries + 1
   local err = feed(station, job.recipe, craftsFor(job.recipe, job.want - have))
@@ -143,8 +143,8 @@ function machine.poll(station)
   return "running"
 end
 
--- Commande annulée : l'entrée et la sortie reviennent au stockage. Les items déjà
--- dans la machine arrivent plus tard en sortie ; le lot suivant les range d'abord
+-- Order cancelled: the inlet and the output go back to storage. Items already in
+-- the machine reach the output later; the next batch puts them away first
 function machine.cancel(station)
   station.job = nil
   empty(station.inlet)

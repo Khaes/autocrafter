@@ -1,7 +1,7 @@
--- pages/crafts.lua : suivi des commandes, ouvert après CRAFTER. En haut les commandes en
--- cours (jaune), puis la file (gris, « attente » si le stock est pris par une autre), puis les commandes finies (vert) ou en erreur
--- (rouge) ou annulées (orange), la plus récente d'abord. Un clic sur une ligne ouvre
--- ses logs, où une commande en file ou en cours peut être annulée.
+-- pages/crafts.lua: order tracking, opened after CRAFT. At the top the running orders
+-- (yellow), then the queue (gray, "waiting" if the stock is held by another one), then
+-- the finished orders (green), failed (red) or cancelled (orange), most recent first.
+-- Clicking a line opens its logs, where a queued or running order can be cancelled.
 
 local ui = require("ui")
 local recipes = require("recipes")
@@ -14,12 +14,12 @@ return function(ctx)
   local name = recipes.displayName
 
   page:add(ui.Label{
-    x = 1, y = 1, w = W, text = "SUIVI DES CRAFTS", align = "center",
+    x = 1, y = 1, w = W, text = "CRAFT TRACKING", align = "center",
     fg = colors.black, bg = colors.yellow,
   })
 
   local list = page:add(ui.List{
-    x = 1, y = 2, w = W, h = H - 4, altBg = colors.gray, emptyText = "Aucun craft",
+    x = 1, y = 2, w = W, h = H - 4, altBg = colors.gray, emptyText = "No craft",
     onSelect = function(_, item) ctx.pages.logs.open(item.order) end,
   })
 
@@ -36,12 +36,12 @@ return function(ctx)
     list:setItems(items)
   end
 
-  -- Barre du bas
-  -- Boutons de 3 lignes, texte en H - 1, à une colonne des bords : le cadre du moniteur
-  -- prend la couleur de fond de la case voisine et ferait dépasser le bord du bouton
+  -- Bottom bar
+  -- 3-line buttons, text on H - 1, one column away from the edges: the monitor's frame
+  -- takes the background color of the next cell and would make the button overflow
   local y = H - 2
   page:add(ui.Button{
-    x = 2, y = y, w = 10, h = 3, text = "< Retour",
+    x = 2, y = y, w = 10, h = 3, text = "< Back",
     onClick = function() app:show("list") end,
   })
   page:add(ui.Button{
@@ -57,7 +57,7 @@ return function(ctx)
     onClick = function() list:scroll(list.h) end,
   })
   page:add(ui.Button{
-    x = W - 8, y = y, w = 8, h = 3, text = "Effacer", bg = colors.gray,
+    x = W - 8, y = y, w = 8, h = 3, text = "Clear", bg = colors.gray,
     onClick = function() crafter.clearHistory() end,
   })
 

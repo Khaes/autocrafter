@@ -1,21 +1,21 @@
--- worker.lua : turtle ouvrière de l'auto-crafteur (étape 7), lancée par startup.lua
+-- worker.lua: worker turtle of the auto-crafter (step 7), started by startup.lua
 --
--- Montage : Crafty Turtle, coffre tampon collé à la turtle (BUFFER_DIR) avec un
--- modem activé, et un modem filaire sur la turtle, sur le même réseau que la turtle
--- principale. Déclarée dans config.stations.turtle de la principale
--- ({ worker = ID de cette turtle, buffer = nom réseau du coffre }), que sa détection
--- remplit en interrogeant les ouvrières (ordre « probe »).
+-- Setup: Crafty Turtle, buffer chest next to the turtle (BUFFER_DIR) with an
+-- activated modem, and a wired modem on the turtle, on the same network as the main
+-- turtle. Declared in the main turtle's config.stations.turtle
+-- ({ worker = ID of this turtle, buffer = network name of the chest }), which its
+-- detection fills by querying the workers ("probe" order).
 --
--- Attend un ordre rednet { kind = "craft", job, cells, count } : la turtle principale
--- a mis `count` items de la case i de la grille dans la case i du tampon, pour chaque
--- case de `cells` (dans l'ordre). L'ouvrière les aspire, crafte, rend tout au tampon
--- (résultat, restes) et répond { job, ok, err }. Elle ne connaît pas le stockage.
+-- Waits for a rednet order { kind = "craft", job, cells, count }: the main turtle has
+-- put `count` items of grid slot i into buffer slot i, for each slot of `cells`
+-- (in order). The worker sucks them in, crafts, gives everything back to the buffer
+-- (result, leftovers) and replies { job, ok, err }. It knows nothing of the storage.
 --
--- Ordre { kind = "probe", job } (détection de la principale) : elle répond
--- { job, ok, items = contenu du tampon, ou nil s'il n'y a pas de coffre }.
+-- Order { kind = "probe", job } (detection on the main turtle): it replies
+-- { job, ok, items = contents of the buffer, or nil if there is no chest }.
 
 local PROTOCOL = "autocrafter"
-local BUFFER_DIR = "down" -- côté du tampon : "up" | "down" | "front"
+local BUFFER_DIR = "down" -- side of the buffer: "up" | "down" | "front"
 local GRID = { 1, 2, 3, 5, 6, 7, 9, 10, 11 }
 
 local BUFFER_SIDE = ({ up = "top", down = "bottom", front = "front" })[BUFFER_DIR]
@@ -25,7 +25,7 @@ local drop = ({ up = turtle.dropUp, down = turtle.dropDown, front = turtle.drop 
 
 local worker = {}
 
--- Rend tout l'inventaire au tampon ; false s'il en reste (tampon plein)
+-- Gives the whole inventory back to the buffer; false if something is left (buffer full)
 function worker.dropAll()
   local ok = true
   for s = 1, 16 do
@@ -39,21 +39,21 @@ function worker.dropAll()
   return ok
 end
 
--- Contenu du tampon (liste des cases) ; nil s'il n'y a pas d'inventaire de ce côté
+-- Contents of the buffer (list of slots); nil if there is no inventory on that side
 function worker.probe()
   if peripheral.hasType(BUFFER_SIDE, "inventory") then return peripheral.call(BUFFER_SIDE, "list") end
 end
 
--- Crafte `count` fois avec les cases `cells` du tampon ; nil ou message d'erreur.
--- turtle.suck prend la première case non vide du coffre : les cases du tampon
--- arrivent donc dans l'ordre de `cells`.
+-- Crafts `count` times with the buffer slots `cells`; nil or an error message.
+-- turtle.suck takes the first non-empty slot of the chest: the buffer slots
+-- therefore arrive in the order of `cells`.
 function worker.craft(cells, count)
-  -- Des restes (craft interrompu) se mêleraient aux ingrédients : on les rend au
-  -- tampon, que la turtle principale vide après la réponse, et on refuse ce lot
+  -- Leftovers (interrupted craft) would mix with the ingredients: give them back to
+  -- the buffer, which the main turtle empties after the reply, and refuse this batch
   for s = 1, 16 do
     if turtle.getItemCount(s) > 0 then
       worker.dropAll()
-      return "Ouvriere pas vide : restes rendus au tampon"
+      return "Worker not empty: leftovers given back to the buffer"
     end
   end
   local err
@@ -61,23 +61,23 @@ function worker.craft(cells, count)
     turtle.select(GRID[cell])
     suck(count)
     if turtle.getItemCount(GRID[cell]) ~= count then
-      err = ("Ingredients incomplets (case %d)"):format(cell)
+      err = ("Missing ingredients (slot %d)"):format(cell)
       break
     end
   end
   if not err then
     turtle.select(16)
     local ok, craftErr = turtle.craft(count)
-    if not ok then err = "Craft refuse : " .. tostring(craftErr) end
+    if not ok then err = "Craft refused: " .. tostring(craftErr) end
   end
-  if not worker.dropAll() then err = err or "Tampon de l'ouvriere plein" end
+  if not worker.dropAll() then err = err or "Worker buffer full" end
   return err
 end
 
 function worker.run()
   peripheral.find("modem", rednet.open)
-  if not rednet.isOpen() then error("Pas de modem : l'ouvriere doit etre sur le reseau filaire", 0) end
-  print(("Ouvriere %d prete (tampon : %s)"):format(os.getComputerID(), BUFFER_DIR))
+  if not rednet.isOpen() then error("No modem: the worker must be on the wired network", 0) end
+  print(("Worker %d ready (buffer: %s)"):format(os.getComputerID(), BUFFER_DIR))
   while true do
     local from, msg = rednet.receive(PROTOCOL)
     if type(msg) == "table" and msg.kind == "craft" then
@@ -90,6 +90,6 @@ function worker.run()
   end
 end
 
--- require("worker") (tests) : le module seul ; lancé comme programme : la boucle
+-- require("worker") (tests): the module only; run as a program: the loop
 if ... == "worker" then return worker end
 worker.run()

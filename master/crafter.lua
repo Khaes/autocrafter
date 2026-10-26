@@ -1,15 +1,15 @@
--- crafter.lua : crafte des recettes en confiant les lots aux postes des machines
+-- crafter.lua: crafts recipes by handing the batches to the machine stations
 --
--- 1. plan()   : arbre complet des crafts à faire, calculé sur un stock virtuel
---               (les sous-crafts réservent leurs ingrédients, les surplus servent aux suivants).
---               Un item qui a plusieurs recettes : on essaie d'abord celles dont les
---               ingrédients sont en stock, puis les autres. Rien n'est lancé tant que
---               tout l'arbre n'est pas possible ; sinon, liste complète des manques.
--- 2. tick()   : lance chaque tâche dès que ses sous-tâches sont finies, un lot par
---               poste libre ; les postes d'une même machine se partagent le travail
--- 3. worker() : file de commandes, plusieurs en cours à la fois (postes partagés).
---               Une commande réserve le stock qu'elle va prendre ; les suivantes
---               sont planifiées sur le stock libre (reserved)
+-- 1. plan()   : full tree of the crafts to make, computed on a virtual stock
+--               (sub-crafts reserve their ingredients, surpluses serve the next ones).
+--               An item with several recipes: first try those whose ingredients are
+--               in stock, then the others. Nothing starts until the whole tree is
+--               possible; otherwise, full list of what is missing.
+-- 2. tick()   : starts each task as soon as its sub-tasks are done, one batch per
+--               free station; the stations of one machine share the work
+-- 3. worker() : order queue, several running at once (shared stations).
+--               An order reserves the stock it will take; the next ones are planned
+--               on the free stock (reserved)
 
 local config = require("config")
 local storage = require("storage")
@@ -20,37 +20,37 @@ local burner = require("machines.burner")
 local crafter = {}
 local name = recipes.displayName
 
--- Pilotes disponibles, par valeur du champ `machine` des recettes
+-- Available drivers, per value of the recipes' `machine` field
 local machines = {
   turtle = require("machines.turtle"),
   pressing = require("machines.depot"),
   mixing = require("machines.basin"),
   compacting = require("machines.basin"),
-  filling = require("machines.depot"),    -- depot sous un spout (poste : spout = ...)
+  filling = require("machines.depot"),    -- depot under a spout (station: spout = ...)
   emptying = require("machines.drain"),
-  deploying = require("machines.depot"),  -- depot sous un deployer (poste : deployer = ...)
+  deploying = require("machines.depot"),  -- depot under a deployer (station: deployer = ...)
 }
--- Postes où les items défilent : coffre d'entrée -> machine -> coffre de sortie
+-- Stations where items flow: inlet chest -> machine -> output chest
 for _, m in ipairs({ "washing", "smoking", "blasting", "haunting", "crushing", "milling", "sawing" }) do
   machines[m] = require("machines.flow")
 end
 crafter.machines = machines
 
--- Stock virtuel en couches : un essai écrit dans sa couche, qu'on garde (commit)
--- s'il réussit ou qu'on jette s'il échoue
+-- Layered virtual stock: a try writes into its layer, which is kept (commit) if it
+-- succeeds or dropped if it fails
 local function layer(parent) return setmetatable({}, { __index = parent }) end
 local function commit(child, parent)
   for k, v in pairs(child) do parent[k] = v end
 end
 
--- Problème d'un plan impossible : missing = { [item] = quantité }, err = autre cause
+-- Problem of an impossible plan: missing = { [item] = count }, err = other cause
 local function addMissing(into, from)
   for item, n in pairs(from or {}) do into[item] = (into[item] or 0) + n end
 end
 
 local plan
 
--- Recettes de `item`, celles dont les ingrédients sont en stock d'abord
+-- Recipes of `item`, those whose ingredients are in stock first
 local function candidates(item, n, stock)
   local direct, other = {}, {}
   for _, r in ipairs(recipes.findAll(item, stock)) do
@@ -64,29 +64,29 @@ local function candidates(item, n, stock)
   return direct
 end
 
--- Produit `n` items (ou mB) `item` avec la première recette possible ;
--- renvoie la tâche, ou nil + problème (celui de la recette préférée)
+-- Produces `n` items (or mB) of `item` with the first possible recipe;
+-- returns the task, or nil + problem (the one of the preferred recipe)
 local function provide(item, n, stock, tasks, visiting)
-  if visiting[item] then return nil, { err = "Recette circulaire : " .. name(item) } end
+  if visiting[item] then return nil, { err = "Circular recipe: " .. name(item) } end
   local list = candidates(item, n, stock)
   if not list[1] then return nil, { missing = { [item] = n } } end
   local best
   for _, r in ipairs(list) do
     local task, problem = plan(r, math.ceil(n / r.output.count), stock, tasks, visiting)
     if task then return task end
-    -- Un manque d'ingrédients dit plus qu'une recette circulaire ou un poste absent
+    -- Missing ingredients say more than a circular recipe or a missing station
     if not best or (problem.missing and not best.missing) then best = problem end
   end
   return nil, best
 end
 
--- Réserve le combustible d'une recette chauffée : 1 par lot, sous-crafté s'il manque
+-- Reserves the fuel of a heated recipe: 1 per batch, sub-crafted if missing
 local function planFuel(recipe, times, task, stock, tasks, visiting)
   local station = task.pool[1]
   local need = math.ceil(times / task.machine.batchSize(station, recipe))
   local fuels = burner.fuels(station, recipe.heat)
   if not fuels[1] then
-    return { err = ("Aucun combustible %s dans config.lua"):format(recipe.heat) }
+    return { err = ("No %s fuel in config.json"):format(recipe.heat) }
   end
   for _, f in ipairs(fuels) do
     if stock[f] >= need then
@@ -109,24 +109,24 @@ local function planFuel(recipe, times, task, stock, tasks, visiting)
   return problem
 end
 
--- Ajoute à `tasks` la tâche de `recipe` x`times` après celles de ses sous-crafts ;
--- renvoie la tâche, ou nil + problème. Sur échec, `stock` et `tasks` ne changent pas.
+-- Adds to `tasks` the task of `recipe` x`times` after those of its sub-crafts;
+-- returns the task, or nil + problem. On failure, `stock` and `tasks` do not change.
 function plan(recipe, times, stock, tasks, visiting)
   local output = recipe.output.name
   local machineName = recipes.machine(recipe)
   local machine = machines[machineName]
-  if not machine then return nil, { err = "Machine inconnue : " .. machineName } end
+  if not machine then return nil, { err = "Unknown machine: " .. machineName } end
   local pool = stations.pool(machineName, recipe.heat)
   if not pool[1] then
-    if not recipe.heat then return nil, { err = "Aucun poste pour " .. machineName .. " dans config.lua" } end
-    return nil, { err = ("Aucun poste %s %s dans config.lua pour %s"):format(machineName, recipe.heat, name(output)) }
+    if not recipe.heat then return nil, { err = "No station for " .. machineName .. " in config.json" } end
+    return nil, { err = ("No %s %s station in config.json for %s"):format(recipe.heat, machineName, name(output)) }
   end
 
   local mine, myTasks = layer(stock), {}
   local task = { recipe = recipe, times = times, machine = machine, pool = pool, deps = {} }
   local missing, err = {}, nil
   visiting[output] = true
-  -- Tous les ingrédients sont examinés, même après un manque : liste complète
+  -- Every ingredient is checked, even after one is missing: full list
   for item, want in pairs(recipes.expected(recipe, times)) do
     local short = want - math.max(0, mine[item])
     if short > 0 then
@@ -158,7 +158,7 @@ function plan(recipe, times, stock, tasks, visiting)
   return task
 end
 
--- Message d'un problème : « Manque 1 Wheat Flour, 300 mB Water » ou la cause
+-- Message of a problem: "Missing 1 Wheat Flour, 300 mB Water" or the cause
 local function describe(problem)
   if not problem.missing then return problem.err end
   local items = {}
@@ -166,7 +166,7 @@ local function describe(problem)
   table.sort(items)
   local parts = {}
   for _, item in ipairs(items) do parts[#parts + 1] = recipes.amount(problem.missing[item], item) end
-  return "Manque " .. table.concat(parts, ", ")
+  return "Missing " .. table.concat(parts, ", ")
 end
 
 local function finished(task) return task.left == 0 and task.running == 0 end
@@ -178,24 +178,24 @@ local function ready(task)
   return true
 end
 
--- « 8 Shaft » / « 500 mB Water » : ce que produisent `crafts` crafts de `recipe`
+-- "8 Shaft" / "500 mB Water": what `crafts` crafts of `recipe` produce
 local function produced(recipe, crafts)
   return recipes.amount(crafts * recipe.output.count, recipe.output.name)
 end
 
 local function stationLabel(station)
-  if station.worker then return "ouvriere " .. station.worker end
+  if station.worker then return "worker " .. station.worker end
   return ((station.name or station.inlet or "?"):gsub("^.-:", ""))
 end
 
--- Commandes en cours d'exécution, les plus anciennes d'abord. Un job :
+-- Orders being executed, oldest first. A job:
 -- { recipe, tasks, done, total, report, log, err, export, order }.
--- Les postes sont partagés entre les jobs : busy[poste] = { job, task, count }.
+-- Stations are shared between jobs: busy[station] = { job, task, count }.
 local jobs, busy = {}, {}
 
--- Ce que les jobs vont encore prendre au stockage : ingrédients et combustible des
--- lots pas encore lancés, produit final à envoyer à la sortie. Ce qu'ils vont produire
--- n'est pas compté : une nouvelle commande ne compte que sur ce qui est déjà là.
+-- What the jobs will still take from storage: ingredients and fuel of the batches not
+-- started yet, final product to send to the output. What they will produce is not
+-- counted: a new order only relies on what is already there.
 local function reserved()
   local r = {}
   local function add(item, n) r[item] = (r[item] or 0) + n end
@@ -213,7 +213,7 @@ local function reserved()
   return r
 end
 
--- Stock relevé par storage.scan ; `free` : moins ce que les jobs ont réservé
+-- Stock read by storage.scan; `free`: minus what the jobs have reserved
 local function stockView(free)
   local r = free and reserved() or {}
   return setmetatable({}, { __index = function(_, item)
@@ -221,9 +221,9 @@ local function stockView(free)
   end })
 end
 
--- Prépare une commande sur le stock libre : alternatives rechoisies, arbre des crafts.
--- `output` : inventaire qui reçoit le produit final (nil = il reste dans le stockage).
--- Renvoie le job, ou nil + message. Rien n'est lancé.
+-- Prepares an order on the free stock: alternatives chosen again, craft tree.
+-- `output`: inventory that receives the final product (nil = it stays in storage).
+-- Returns the job, or nil + message. Nothing is started.
 local function prepare(recipe, times, report, log, output)
   recipe = recipes.refresh(recipe, stockView(true))
   local tasks = {}
@@ -242,8 +242,8 @@ local function prepare(recipe, times, report, log, output)
   return job
 end
 
--- Lance les lots prêts du job sur les postes libres. Après une erreur, plus rien ne
--- démarre mais on attend les lots en cours, pour que leurs items reviennent au stockage.
+-- Starts the job's ready batches on the free stations. After an error nothing else
+-- starts, but the running batches are awaited so that their items go back to storage.
 local function startLots(job)
   for _, t in ipairs(job.tasks) do
     if job.err then return end
@@ -252,9 +252,9 @@ local function startLots(job)
         if t.left == 0 then break end
         if not busy[station] then
           local count = math.min(t.machine.batchSize(station, t.recipe), t.left)
-          -- Un bloc disparu (cassé, modem coupé) fait une erreur de commande, pas un plantage
+          -- A missing block (broken, modem off) is an order error, not a crash
           local ok, err = pcall(t.machine.start, station, t.recipe, count)
-          if not ok then err = "Poste " .. stationLabel(station) .. " : " .. tostring(err) end
+          if not ok then err = "Station " .. stationLabel(station) .. ": " .. tostring(err) end
           if err then job.err = err; return end
           busy[station] = { job = job, task = t, count = count }
           t.left, t.running = t.left - count, t.running + count
@@ -264,7 +264,7 @@ local function startLots(job)
   end
 end
 
--- Suivi des postes occupés ; true si l'un d'eux travaille encore
+-- Follows the busy stations; true if one of them is still working
 local function pollStations()
   local working = false
   for station, lot in pairs(busy) do
@@ -279,14 +279,14 @@ local function pollStations()
       if status == "done" then
         job.done = job.done + lot.count
         job.report(job.done, job.total)
-        -- La dernière tâche est la commande elle-même : « Termine » suffit
+        -- The last task is the order itself: "Done" is enough
         if finished(t) and t ~= job.tasks[#job.tasks] then
           local label = recipes.machineLabel(t.recipe)
-          job.log(("Crafte : %s%s"):format(produced(t.recipe, t.times), label and (" [" .. label .. "]") or ""))
+          job.log(("Crafted: %s%s"):format(produced(t.recipe, t.times), label and (" [" .. label .. "]") or ""))
         end
       else
-        err = err or "Erreur de la machine"
-        job.log(("Echec sur %s : %s"):format(stationLabel(station), err))
+        err = err or "Machine error"
+        job.log(("Failed on %s: %s"):format(stationLabel(station), err))
         job.err = job.err or err
       end
     end
@@ -294,15 +294,15 @@ local function pollStations()
   return working
 end
 
--- Un tour de l'ordonnanceur : lots sur les postes libres (les jobs les plus anciens
--- d'abord), puis suivi des postes ; true si un poste travaille encore
+-- One scheduler round: batches on the free stations (oldest jobs first), then
+-- follow-up of the stations; true if a station is still working
 local function tick()
   for _, job in ipairs(jobs) do startLots(job) end
   return pollStations()
 end
 
--- Fin d'un job : nil s'il n'est pas fini, sinon true, ou false + message.
--- Le produit final part vers la sortie du job (les intermédiaires restent stockés).
+-- End of a job: nil if it is not over, else true, or false + message.
+-- The final product goes to the job's output (intermediates stay in storage).
 local function over(job)
   for _, lot in pairs(busy) do
     if lot.job == job then return nil end
@@ -312,11 +312,11 @@ local function over(job)
   if not job.export then return true end
   local output = job.recipe.output.name
   if not peripheral.isPresent(job.output) then
-    return false, "Sortie introuvable : " .. job.output .. " (produit reste au stockage)"
+    return false, "Output not found: " .. job.output .. " (product left in storage)"
   end
   local sent = storage.export(output, job.export, job.output)
   if sent < job.export then
-    return false, ("Sortie pleine : %d/%d %s envoyes"):format(sent, job.export, name(output))
+    return false, ("Output full: %d/%d %s sent"):format(sent, job.export, name(output))
   end
   return true
 end
@@ -327,8 +327,8 @@ local function remove(list, value)
   end
 end
 
--- Crafte `times` fois la recette, sous-crafts compris, et attend la fin.
--- report(crafts finis, crafts au total), log(texte). Renvoie true, ou false + message.
+-- Crafts the recipe `times` times, sub-crafts included, and waits for the end.
+-- report(crafts done, total crafts), log(text). Returns true, or false + message.
 function crafter.craft(recipe, times, report, log)
   storage.scan()
   local job, err = prepare(recipe, times, report, log, stations.defaultOutput())
@@ -345,21 +345,20 @@ function crafter.craft(recipe, times, report, log)
   return ok, err
 end
 
--- Possible avec le stock libre (relevé par storage.scan), sous-crafts compris ?
--- Rien n'est réservé ni lancé.
+-- Possible with the free stock (read by storage.scan), sub-crafts included?
+-- Nothing is reserved or started.
 function crafter.feasible(recipe, times)
   return plan(recipe, times or 1, stockView(true), {}, {}) ~= nil
 end
 
--- File de commandes. Une commande : { recipe, times, done, total, log, ok, text }.
--- status.running = commandes en cours, status.history = commandes finies (la plus
--- récente en premier). Chaque changement envoie l'événement "crafter" pour que
--- l'interface se redessine.
+-- Order queue. An order: { recipe, times, done, total, log, ok, text }.
+-- status.running = running orders, status.history = finished orders (most recent
+-- first). Each change sends the "crafter" event so that the UI redraws.
 local HISTORY, ORDER_LOG, JOURNAL = 20, 100, 200
 local queue, running = {}, {}
 crafter.status = { queue = queue, running = running, history = {} }
-crafter.journal = {} -- dernières lignes, toutes commandes (aussi dans config.logFile)
-local changed = false -- file ou commandes en cours modifiées : on réessaie la file
+crafter.journal = {} -- last lines, all orders (also in config.logFile)
+local changed = false -- queue or running orders changed: try the queue again
 
 local function notify() os.queueEvent("crafter") end
 
@@ -368,8 +367,8 @@ local function push(list, value, max)
   if #list > max then table.remove(list, 1) end
 end
 
--- Journal sur disque : on ajoute à la fin, et on réécrit les JOURNAL dernières
--- lignes quand le fichier en a deux fois trop
+-- Log on disk: lines are appended, and the last JOURNAL lines are written back when
+-- the file has twice too many
 local fileLines
 local function writeFile(line)
   local path = config.logFile
@@ -403,16 +402,16 @@ function crafter.log(order, text)
   writeFile(line)
   push(crafter.journal, line, JOURNAL)
   if order then push(order.log, line, ORDER_LOG) end
-  notify() -- écrans des logs (screens.lua)
+  notify() -- log screens (screens.lua)
 end
 
--- « 8 Shaft » : ce que demande la commande
+-- "8 Shaft": what the order asks for
 function crafter.orderText(order)
   return produced(order.recipe, order.times)
 end
 
--- `output` : inventaire qui reçoit le produit final ; nil = la sortie par défaut
--- (stations.defaultOutput), false = il reste dans le stockage
+-- `output`: inventory that receives the final product; nil = the default output
+-- (stations.defaultOutput), false = it stays in storage
 function crafter.order(recipe, times, output)
   if output == nil then output = stations.defaultOutput() end
   queue[#queue + 1] = { recipe = recipe, times = times, done = 0, total = 0, log = {},
@@ -421,11 +420,11 @@ function crafter.order(recipe, times, output)
   notify()
 end
 
-local CANCELLED = "Annulee"
+local CANCELLED = "Cancelled"
 
--- Demande l'annulation d'une commande en file ou en cours ; false si elle est déjà
--- finie. C'est crafter.worker qui annule : l'interface tourne dans une autre coroutine,
--- qui peut l'interrompre au milieu d'un transfert (un appel de périphérique rend la main)
+-- Asks to cancel a queued or running order; false if it is already finished.
+-- crafter.worker does the cancelling: the UI runs in another coroutine, which could
+-- interrupt it in the middle of a transfer (a peripheral call yields)
 function crafter.cancel(order)
   if order.ok ~= nil or order.cancel then return false end
   order.cancel = true
@@ -442,39 +441,39 @@ end
 
 local function finish(order, ok, err)
   order.ok = ok
-  order.text = ok and ("Termine : +" .. crafter.orderText(order)) or err
-  crafter.log(order, (ok or err == CANCELLED) and order.text or ("Erreur : " .. err))
+  order.text = ok and ("Done: +" .. crafter.orderText(order)) or err
+  crafter.log(order, (ok or err == CANCELLED) and order.text or ("Error: " .. err))
   remove(running, order)
   local history = crafter.status.history
   table.insert(history, 1, order)
   if #history > HISTORY then table.remove(history) end
   notify()
-  -- Son de fin (sound.lua, branché par main.lua) ; un haut-parleur qui plante ne
-  -- doit pas arrêter l'ordonnanceur
+  -- End sound (sound.lua, hooked up by main.lua); a failing speaker must not stop
+  -- the scheduler
   if crafter.onFinish then pcall(crafter.onFinish, order) end
 end
 
--- Commandes à afficher : en cours, en file, puis finies (la plus récente d'abord).
--- Liste de { order, kind, state } ; kind : "running" | "queued" | "done" | "error" | "cancelled"
+-- Orders to display: running, queued, then finished (most recent first).
+-- List of { order, kind, state }; kind: "running" | "queued" | "done" | "error" | "cancelled"
 function crafter.summary()
   local t = {}
   for _, o in ipairs(running) do
     t[#t + 1] = { order = o, kind = "running",
-                  state = o.cancel and "annulation" or ("en cours " .. o.done .. "/" .. o.total) }
+                  state = o.cancel and "cancelling" or ("running " .. o.done .. "/" .. o.total) }
   end
   for _, o in ipairs(queue) do
-    t[#t + 1] = { order = o, kind = "queued", state = o.waiting and "attente" or "en file" }
+    t[#t + 1] = { order = o, kind = "queued", state = o.waiting and "waiting" or "queued" }
   end
   for _, o in ipairs(crafter.status.history) do
-    if o.ok then t[#t + 1] = { order = o, kind = "done", state = "fini" }
-    elseif o.cancel then t[#t + 1] = { order = o, kind = "cancelled", state = "annulee" }
-    else t[#t + 1] = { order = o, kind = "error", state = "erreur" } end
+    if o.ok then t[#t + 1] = { order = o, kind = "done", state = "done" }
+    elseif o.cancel then t[#t + 1] = { order = o, kind = "cancelled", state = "cancelled" }
+    else t[#t + 1] = { order = o, kind = "error", state = "error" } end
   end
   return t
 end
 
--- Postes, machine par machine (la turtle d'abord) : liste de { machine, label, station,
--- item, count } ; item = ce que le poste fabrique, nil s'il est libre
+-- Stations, machine by machine (the turtle first): list of { machine, label, station,
+-- item, count }; item = what the station is making, nil if it is free
 function crafter.stationStates()
   local names = {}
   for m in pairs(config.stations or {}) do
@@ -486,17 +485,16 @@ function crafter.stationStates()
   for _, m in ipairs(names) do
     for _, s in ipairs(stations.pool(m)) do
       local lot = busy[s]
-      t[#t + 1] = { machine = m, label = s == stations.pool("turtle")[1] and "principale" or stationLabel(s),
+      t[#t + 1] = { machine = m, label = s == stations.pool("turtle")[1] and "main" or stationLabel(s),
                     station = s, item = lot and lot.task.recipe.output.name, count = lot and lot.count }
     end
   end
   return t
 end
 
--- Lance les commandes de la file dont l'arbre passe avec le stock libre. Une commande
--- possible avec tout le stock mais pas avec le stock libre attend la fin d'une
--- commande en cours (qui tient ses ingrédients) ; impossible même avec tout le stock,
--- elle est en erreur tout de suite.
+-- Starts the queued orders whose tree fits the free stock. An order that is possible
+-- with the whole stock but not with the free stock waits for a running order to end
+-- (it holds its ingredients); impossible even with the whole stock, it fails right away.
 local function startQueued()
   storage.scan()
   local i = 1
@@ -505,7 +503,7 @@ local function startQueued()
     if not order.seen then
       order.seen = true
       local to = order.output and order.output ~= stations.defaultOutput() and (" -> " .. order.output) or ""
-      crafter.log(order, "Commande : " .. crafter.orderText(order) .. to)
+      crafter.log(order, "Order: " .. crafter.orderText(order) .. to)
     end
     local job, err = prepare(order.recipe, order.times, function(done, total)
       order.done, order.total = done, total
@@ -519,7 +517,7 @@ local function startQueued()
       running[#running + 1] = order
     elseif jobs[1] and plan(recipes.refresh(order.recipe, stockView(false)), order.times,
                             stockView(false), {}, {}) then
-      if not order.waiting then crafter.log(order, "En attente : " .. err) end
+      if not order.waiting then crafter.log(order, "Waiting: " .. err) end
       order.waiting = true
       i = i + 1
     else
@@ -530,9 +528,9 @@ local function startQueued()
   notify()
 end
 
--- Annulations demandées par crafter.cancel. En file : retirée tout de suite. En cours :
--- plus rien ne démarre ; les postes qui savent s'arrêter (machine.cancel) rendent
--- leurs items au stockage, les autres (ouvrières) finissent leur lot
+-- Cancellations asked by crafter.cancel. Queued: removed right away. Running: nothing
+-- else starts; the stations that can stop (machine.cancel) give their items back to
+-- storage, the others (workers) finish their batch
 local function applyCancels()
   local i = 1
   while queue[i] do
@@ -542,7 +540,7 @@ local function applyCancels()
     if job.order and job.order.cancel and not job.cancelled then
       job.cancelled = true
       job.err = CANCELLED
-      crafter.log(job.order, "Annulation demandee")
+      crafter.log(job.order, "Cancel requested")
       for station, lot in pairs(busy) do
         if lot.job == job and lot.task.machine.cancel then
           pcall(lot.task.machine.cancel, station)
@@ -554,8 +552,8 @@ local function applyCancels()
   end
 end
 
--- Exécute les commandes de la file, plusieurs à la fois ; tourne en parallèle de
--- l'interface. sleep() perd les événements "crafter" : crafter.order lève `changed`.
+-- Runs the queued orders, several at once; runs alongside the UI.
+-- sleep() drops "crafter" events: crafter.order sets `changed`.
 function crafter.worker()
   while true do
     if changed then

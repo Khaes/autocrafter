@@ -1,8 +1,8 @@
--- journal.lua : mise en forme des lignes du journal (pages/logs.lua, screens.lua)
+-- journal.lua: formatting of the log lines (pages/logs.lua, screens.lua)
 
 local journal = {}
 
--- Coupe `text` en lignes de `w` caractères, les suites décalées de 2
+-- Cuts `text` into lines of `w` characters, the continuations indented by 2
 function journal.wrap(text, w, out)
   local first = true
   while #text > 0 do
@@ -16,16 +16,16 @@ function journal.wrap(text, w, out)
 end
 
 function journal.color(line)
-  if line:find("Erreur", 1, true) or line:find("Echec", 1, true) or line:find("Bloc absent", 1, true) then
+  if line:find("Error", 1, true) or line:find("Failed", 1, true) or line:find("Block missing", 1, true) then
     return colors.red
   end
-  if line:find("Bloc reconnecte", 1, true) then return colors.lime end
-  if line:find("Termine", 1, true) then return colors.lime end
-  if line:find("Commande", 1, true) then return colors.yellow end
+  if line:find("Block reconnected", 1, true) then return colors.lime end
+  if line:find("Done", 1, true) then return colors.lime end
+  if line:find("Order", 1, true) then return colors.yellow end
   return colors.white
 end
 
--- Lignes coupées et colorées pour une ui.List de largeur w
+-- Wrapped and colored lines for a ui.List of width w
 function journal.lines(log, w)
   local lines = {}
   for _, l in ipairs(log) do

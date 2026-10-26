@@ -1,15 +1,15 @@
--- screens.lua : moniteurs en plus de l'écran principal, en lecture seule
+-- screens.lua: monitors besides the main screen, read only
 --
---   logs   : journal de toutes les commandes, en direct
---   crafts : commandes en cours, en file, puis finies
---   status : son, commandes, blocs absents, et ce que fait chaque poste
+--   logs   : log of every order, live
+--   crafts : running orders, queued, then finished
+--   status : sound, orders, missing blocks, and what each station is doing
 --
--- Un moniteur pas encore choisi affiche ses choix : le toucher l'attribue, et le choix
--- est retenu dans config.json (clé screens : { [nom du moniteur] = "logs" | "crafts" |
--- "status" | "none" }). Toucher la ligne du titre redonne le choix. Ailleurs, la
--- moitié haute remonte d'une page, la moitié basse descend.
--- Les moniteurs collés du même type fusionnent : les espacer d'un bloc.
--- L'écran principal : config.monitor, sinon le plus grand moniteur libre (retenu).
+-- A monitor not chosen yet shows its choices: touching one assigns it, and the choice
+-- is remembered in config.json (screens key: { [monitor name] = "logs" | "crafts" |
+-- "status" | "none" }). Touching the title line gives the choice again. Elsewhere,
+-- the top half goes back one page, the bottom half goes forward.
+-- Monitors of the same type placed next to each other merge: keep one block between them.
+-- The main screen: config.monitor, else the largest free monitor (remembered).
 
 local ui = require("ui")
 local config = require("config")
@@ -22,14 +22,14 @@ local journal = require("journal")
 local screens = {}
 
 local KINDS = { "logs", "crafts", "status", "none" }
-local LABELS = { logs = "Logs", crafts = "Crafts", status = "Statut", none = "Rien" }
-local TITLES = { logs = "LOGS", crafts = "CRAFTS", status = "STATUT" }
+local LABELS = { logs = "Logs", crafts = "Crafts", status = "Status", none = "None" }
+local TITLES = { logs = "LOGS", crafts = "CRAFTS", status = "STATUS" }
 local TITLE_BG = { logs = colors.cyan, crafts = colors.yellow, status = colors.lightBlue }
 local CRAFT_COLORS = { running = colors.yellow, queued = colors.lightGray, done = colors.lime,
                        error = colors.red, cancelled = colors.orange }
 
-local mainName -- moniteur de l'écran principal, jamais utilisé ici
-local list = {} -- [nom] = écran : { name, mon, win, w, h, offset, follow, choosing }
+local mainName -- monitor of the main screen, never used here
+local list = {} -- [name] = screen: { name, mon, win, w, h, offset, follow, choosing }
 
 local function assigned() return config.screens or {} end
 
@@ -42,8 +42,8 @@ local function monitors()
   return t
 end
 
--- Moniteur de l'écran principal : config.monitor s'il est là, sinon le plus grand
--- de ceux qui ne sont pas des écrans secondaires. Renvoie le moniteur et son nom, ou nil
+-- Monitor of the main screen: config.monitor if present, else the largest of those
+-- that are not secondary screens. Returns the monitor and its name, or nil
 function screens.main()
   if config.monitor and peripheral.isPresent(config.monitor) then
     return peripheral.wrap(config.monitor), config.monitor
@@ -57,8 +57,8 @@ function screens.main()
       if not bestArea or w * h > bestArea then best, bestName, bestArea = m, n, w * h end
     end
   end
-  -- Retenu, pour qu'un moniteur ajouté plus tard ne prenne pas sa place. Pas avant la
-  -- détection : config.json n'existe pas encore
+  -- Remembered, so that a monitor added later does not take its place. Not before the
+  -- detection: config.json does not exist yet
   if bestName and config.scanned and assigned()[bestName] == nil then
     config.monitor = bestName
     config.edit(function(data) data.monitor = bestName end)
@@ -75,12 +75,12 @@ local function save(name, kind)
   end)
 end
 
----------------------------------------------------------------- Contenu
+---------------------------------------------------------------- Content
 local function title(page, s, text, bg)
   page:add(ui.Label{ x = 1, y = 1, w = s.w, text = text, align = "center", fg = colors.black, bg = bg })
 end
 
--- Liste qui défile avec s.offset ; s.follow : collée à la fin (journal en direct)
+-- List that scrolls with s.offset; s.follow: stuck to the end (live log)
 local function body(page, s, items, emptyText, altBg)
   local l = ui.List{ x = 1, y = 2, w = s.w, h = s.h - 1, altBg = altBg, emptyText = emptyText }
   l:setItems(items)
@@ -111,7 +111,7 @@ end
 
 local function logsView(page, s)
   title(page, s, TITLES.logs, TITLE_BG.logs)
-  body(page, s, journal.lines(crafter.journal, s.w), "Rien pour l'instant")
+  body(page, s, journal.lines(crafter.journal, s.w), "Nothing yet")
 end
 
 local function craftsView(page, s)
@@ -122,7 +122,7 @@ local function craftsView(page, s)
     items[#items + 1] = { text = recipes.displayName(o.recipe.output.name), fg = fg, rightFg = fg,
                           right = o.times * o.recipe.output.count .. " " .. e.state }
   end
-  body(page, s, items, "Aucun craft", colors.gray)
+  body(page, s, items, "No craft", colors.gray)
 end
 
 local function statusView(page, s)
@@ -131,15 +131,15 @@ local function statusView(page, s)
   local function add(text, right, fg, rightFg)
     items[#items + 1] = { text = text, right = right, fg = fg, rightFg = rightFg or fg }
   end
-  -- En-tête sur toute la largeur : les écrans secondaires sont étroits
+  -- Header lines on the full width: the secondary screens are narrow
   local speaker = sound.speaker()
-  add(not speaker and "Son : sans speaker" or sound.enabled and "Son : actif" or "Son : coupe",
+  add(not speaker and "Sound: no speaker" or sound.enabled and "Sound: on" or "Sound: off",
       nil, speaker and sound.enabled and colors.lime or colors.lightGray)
   local st = crafter.status
-  add("En cours " .. #st.running .. ", file " .. #st.queue, nil,
+  add("Active " .. #st.running .. ", queued " .. #st.queue, nil,
       st.running[1] and colors.yellow or colors.lightGray)
   local missing = network.state and network.state.missing or 0
-  add(missing > 0 and ("Blocs absents : " .. missing) or "Reseau : ok", nil,
+  add(missing > 0 and ("Missing blocks: " .. missing) or "Network: ok", nil,
       missing > 0 and colors.red or colors.lime)
   add("", nil)
   local missingSet = network.state and network.state.missingSet or {}
@@ -147,11 +147,11 @@ local function statusView(page, s)
     local block = p.station.name or p.station.inlet
     local label = p.machine == "turtle" and ("turtle " .. p.label) or (p.machine .. " " .. p.label)
     if block and block ~= "turtle" and missingSet[block] then
-      add(label, "absent", colors.white, colors.red)
+      add(label, "missing", colors.white, colors.red)
     elseif p.item then
       add(label, recipes.displayName(p.item) .. " x" .. p.count, colors.white, colors.yellow)
     else
-      add(label, "libre", colors.white, colors.lightGray)
+      add(label, "free", colors.white, colors.lightGray)
     end
   end
   body(page, s, items, "", colors.gray)
@@ -159,11 +159,11 @@ end
 
 local VIEWS = { logs = logsView, crafts = craftsView, status = statusView }
 
----------------------------------------------------------------- Écrans
+---------------------------------------------------------------- Screens
 local Screen = {}
 Screen.__index = Screen
 
--- Redessine l'écran ; un moniteur débranché entre-temps ne plante pas tout
+-- Redraws the screen; a monitor unplugged in the meantime does not crash anything
 function Screen:render()
   pcall(function()
     local w, h = self.mon.getSize()
@@ -175,9 +175,9 @@ function Screen:render()
     local kind = assigned()[self.name]
     self.page = page
     if not config.scanned then
-      -- Pas de config.json avant la fin de la détection : rien à retenir encore
-      title(page, self, "AUTO-CRAFTEUR", colors.cyan)
-      page:add(ui.Label{ x = 1, y = 3, w = self.w, text = "Detection en cours", align = "center" })
+      -- No config.json before the end of the detection: nothing to remember yet
+      title(page, self, "AUTO-CRAFTER", colors.cyan)
+      page:add(ui.Label{ x = 1, y = 3, w = self.w, text = "Detecting...", align = "center" })
     elseif self.choosing or not kind then
       chooser(page, self)
     elseif VIEWS[kind] then
@@ -208,7 +208,7 @@ function Screen:touch(x, y)
   self:render()
 end
 
--- Moniteurs branchés, sauf l'écran principal ; nouveaux écrans créés, débranchés retirés
+-- Plugged monitors, except the main screen; new screens created, unplugged ones removed
 local function refresh()
   local present = {}
   for _, n in ipairs(monitors()) do
@@ -230,7 +230,7 @@ local function renderAll()
   for _, s in pairs(list) do s:render() end
 end
 
--- `main` : nom du moniteur de l'écran principal (nil = terminal)
+-- `main`: name of the main screen's monitor (nil = terminal)
 function screens.init(main)
   mainName = main
   list = {}
@@ -239,7 +239,7 @@ end
 
 screens.screens = function() return list end
 
--- Coroutine lancée avec l'interface (main.lua)
+-- Coroutine started with the UI (main.lua)
 function screens.run()
   renderAll()
   local timer = os.startTimer(config.refreshRate)

@@ -1,4 +1,4 @@
--- main.lua : auto-crafteur pour Crafty Turtle (lancé par startup.lua)
+-- main.lua: auto-crafter for a Crafty Turtle (started by startup.lua)
 
 local config = require("config")
 local storage = require("storage")
@@ -8,12 +8,18 @@ local remote = require("remote")
 local network = require("network")
 local screens = require("screens")
 local sound = require("sound")
+local recipes = require("recipes")
+
+-- Every recipe comes from the AutoCrafter Link mod: without it there is nothing to craft
+if not recipes.hasApi() then
+  error("AutoCrafter Link mod missing: install autocrafterlink-1.0.0.jar (see README.md)", 0)
+end
 
 fs.makeDir(config.dataDir)
-remote.open() -- ordres aux turtles ouvrières (étape 7), par le modem filaire
+remote.open() -- orders to the worker turtles (step 7), over the wired modem
 
--- Affichage sur le moniteur principal s'il y en a un, sinon sur le terminal ; les autres
--- moniteurs montrent les logs, les crafts ou le statut (screens.lua)
+-- Display on the main monitor if there is one, else on the terminal; the other
+-- monitors show the logs, the crafts or the status (screens.lua)
 local mon, monName = screens.main()
 local target = term.current()
 if mon then
@@ -25,13 +31,13 @@ crafter.onFinish = sound.onFinish
 
 local app = ui.App{ target = target, monitor = monName, refreshRate = config.refreshRate }
 local ctx = { app = app, pages = {} }
-for _, name in ipairs({ "list", "recipe", "crafts", "logs", "detector", "postes" }) do
+for _, name in ipairs({ "list", "recipe", "crafts", "logs", "detector", "stations" }) do
   ctx.pages[name] = require("pages." .. name)(ctx)
   app:addPage(name, ctx.pages[name])
 end
 
--- Un bloc ajouté ou retiré du réseau : configuration revérifiée, l'écran principal
--- signale les blocs qui viennent de disparaître (étape 9)
+-- A block added to or removed from the network: configuration checked again, the main
+-- screen reports the blocks that just disappeared (step 9)
 local function networkChanged()
   if not config.scanned or app.current == "detector" then return end
   local before = network.state and network.state.missingSet or {}
@@ -46,16 +52,16 @@ local function networkChanged()
     if not state.missingSet[n] then back[#back + 1] = n end
   end
   table.sort(back)
-  if lost[1] then crafter.log(nil, "Bloc absent : " .. table.concat(lost, ", ")) end
-  if back[1] then crafter.log(nil, "Bloc reconnecte : " .. table.concat(back, ", ")) end
-  storage.ready() -- tampon revenu : la turtle peut de nouveau crafter
+  if lost[1] then crafter.log(nil, "Block missing: " .. table.concat(lost, ", ")) end
+  if back[1] then crafter.log(nil, "Block reconnected: " .. table.concat(back, ", ")) end
+  storage.ready() -- buffer back: the turtle can craft again
   ctx.pages.list.onNetwork(lost)
-  if app.current == "postes" then ctx.pages.postes.update() end
-  os.queueEvent("network") -- écran de statut
+  if app.current == "stations" then ctx.pages.stations.update() end
+  os.queueEvent("network") -- status screen
 end
 
 app.onEvent = function(ev)
-  -- Bouton « + » de JEI avec la tablette liée à ce computer : la recette va dans la commande
+  -- JEI "+" button with the tablet linked to this computer: the recipe goes into the order
   if ev[1] == "jei_recipe" then ctx.pages.list.order.fromJei(ev[2], ev[4]) end
   if ev[1] == "peripheral" or ev[1] == "peripheral_detach" then networkChanged() end
 end
@@ -63,19 +69,18 @@ end
 if mon then
   term.clear()
   term.setCursorPos(1, 1)
-  --print("Ajouter un nom de craft et appuyer sur entree")
 end
 
--- Un bloc absent (tampon compris) ne bloque pas le démarrage : il est signalé
+-- A missing block (buffer included) does not block the start: it is reported
 local function startApp()
   local state = network.check()
   local lost = {}
   for n in pairs(state.missingSet) do lost[#lost + 1] = n end
   table.sort(lost)
-  if lost[1] then crafter.log(nil, "Bloc absent au demarrage : " .. table.concat(lost, ", ")) end
+  if lost[1] then crafter.log(nil, "Block missing at startup: " .. table.concat(lost, ", ")) end
   local err = storage.ready()
   app:show("list")
-  -- Erreur du tampon qui n'est pas un bloc absent (pas une Crafty Turtle...) : affichée telle quelle
+  -- Buffer error that is not a missing block (not a Crafty Turtle...): shown as is
   ctx.pages.list.onNetwork(lost, not state.missingSet[config.buffer] and err or nil)
 end
 
@@ -84,15 +89,15 @@ if config.scanned then
 else
   app:show("detector")
 end
--- L'interface, les crafts et l'écoute des ouvrières tournent en même temps ; quitter
--- l'interface arrête tout
+-- The UI, the crafts and listening to the workers run at the same time; quitting
+-- the UI stops everything
 local ok, err = pcall(parallel.waitForAny, function() app:run() end, crafter.worker, remote.listen,
   screens.run)
 
 local outs = { term.current(), mon }
 for _, s in pairs(screens.screens()) do outs[#outs + 1] = s.mon end
 for _, t in ipairs(outs) do
-  pcall(function() -- un moniteur débranché entre-temps
+  pcall(function() -- a monitor unplugged in the meantime
     t.setBackgroundColor(colors.black)
     t.setTextColor(colors.white)
     t.clear()

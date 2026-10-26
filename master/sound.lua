@@ -1,7 +1,7 @@
--- sound.lua : son de fin de commande sur un haut-parleur (speaker) du réseau ou collé à
--- la turtle. Accord aigu : commande finie ; notes graves : erreur ; rien pour une
--- annulation. Coupé ou remis par le bouton du titre de l'écran principal, retenu dans
--- config.json (clé sound, true par défaut).
+-- sound.lua: end-of-order sound on a speaker on the network or next to the turtle.
+-- High chord: order done; low notes: error; nothing for a cancellation. Turned off
+-- or on by the button in the title of the main screen, remembered in config.json
+-- (sound key, true by default).
 
 local config = require("config")
 
@@ -16,7 +16,7 @@ function sound.toggle()
   config.edit(function(data) data.sound = sound.enabled end)
 end
 
--- Notes jouées ensemble (un speaker en joue jusqu'à 8 par tick, sans attendre)
+-- Notes played together (a speaker plays up to 8 per tick, without waiting)
 local NOTES = {
   done = { { "bell", 12 }, { "bell", 16 }, { "bell", 19 } },
   error = { { "bass", 6 }, { "bass", 7 }, { "didgeridoo", 6 } },
@@ -29,7 +29,7 @@ function sound.play(kind)
   for _, n in ipairs(NOTES[kind]) do speaker.playNote(n[1], 1, n[2]) end
 end
 
--- crafter.onFinish : commande finie, en erreur ou annulée
+-- crafter.onFinish: order done, failed or cancelled
 function sound.onFinish(order)
   if order.ok then sound.play("done")
   elseif not order.cancel then sound.play("error") end

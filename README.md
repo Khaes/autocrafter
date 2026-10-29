@@ -15,7 +15,9 @@ worker/   program of the optional worker turtles (extra crafting tables)
 ## Requirements
 
 - Minecraft 1.20.1 with **CC:Tweaked** and **Create 6**
-- Required:
+- **AutoCrafter Link** (`mod/autocrafterlink-1.0.0.jar`): gives the computer the game's
+  recipes, nothing can be crafted without it
+- Optional:
   - **Storage Drawers**: a drawer controller can be the main storage
   - **Create Deco**: only used to detect blaze burners under presses
 

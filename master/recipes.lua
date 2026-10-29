@@ -2,6 +2,9 @@
 -- A recipe:
 --   { output = { name, count }, grid = { [1..9] = item name }, names = { name -> display },
 --     machine = "turtle" }  -- machine optional, "turtle" by default
+-- A tag ingredient (planks, create:stone_types/veridium...) uses one item of the tag;
+--   alts = { [that item] = { every item of the tag but the result } } lets the crafter
+--   take any of them from storage (crafter.lua planSplit)
 -- A Create machine recipe replaces grid with inputs:
 --   { output = ..., machine = "pressing", inputs = { [name] = count } }
 -- Fluids (in mB): fluids = { [name] = mB } as input; a fluid result is written
@@ -10,34 +13,19 @@
 --   others go on the depot
 --
 -- The AutoCrafter Link mod gives the computer the `recipes` API: the game's recipes are
--- converted to this format on demand. Recipes from recipes.db (written by hand) come
--- before the game's recipes for the same machine.
+-- converted to this format on demand.
 
 -- The mod's API, before the module takes its name
 local api = type(recipes) == "table" and recipes.getFor and recipes or nil
 
 local recipes = {}
 
-local list = {}
-local path
-local nameCache = {}
-local fluidNames = {}
--- From the mod's API (indexNames does not clear them)
 local apiCache = {} -- item -> raw recipes from recipes.getFor
 local apiNames, apiFluids = {}, {}
 
-local function indexNames()
-  nameCache, fluidNames = {}, {}
-  for _, r in ipairs(list) do
-    for k, v in pairs(r.names or {}) do nameCache[k] = v end
-    for k in pairs(r.fluids or {}) do fluidNames[k] = true end
-    if r.output.fluid then fluidNames[r.output.name] = true end
-  end
-end
-
 -- true if `name` is a fluid of a recipe (amounts in mB)
 function recipes.isFluid(name)
-  return fluidNames[name] == true or apiFluids[name] == true
+  return apiFluids[name] == true
 end
 
 -- "250 mB Water" or "3 Iron Ingot"
@@ -46,52 +34,8 @@ function recipes.amount(n, name)
 end
 
 function recipes.displayName(name)
-  if nameCache[name] then return nameCache[name] end
   if apiNames[name] then return apiNames[name] end
   return ((name:match(":(.+)$") or name):gsub("_", " "))
-end
-
-local function sort()
-  table.sort(list, function(a, b)
-    return recipes.displayName(a.output.name):lower()
-         < recipes.displayName(b.output.name):lower()
-  end)
-end
-
-function recipes.load(p)
-  path = p
-  list = {}
-  apiCache = {}
-  if fs.exists(path) then
-    local f = fs.open(path, "r")
-    local data = textutils.unserialize(f.readAll())
-    f.close()
-    if type(data) == "table" then list = data end
-  end
-  indexNames()
-  sort()
-end
-
-function recipes.save()
-  local f = fs.open(path, "w")
-  f.write(textutils.serialize(list))
-  f.close()
-end
-
-function recipes.all() return list end
-
--- Recipes whose name contains q (case insensitive)
-function recipes.search(q)
-  q = (q or ""):lower()
-  if q == "" then return list end
-  local out = {}
-  for _, r in ipairs(list) do
-    if recipes.displayName(r.output.name):lower():find(q, 1, true)
-       or r.output.name:find(q, 1, true) then
-      out[#out + 1] = r
-    end
-  end
-  return out
 end
 
 ---------------------------------------------------------------- game recipes
@@ -107,6 +51,8 @@ local TYPE_MACHINE = {
   ["minecraft:blasting"] = "blasting", ["create:haunting"] = "haunting",
   ["create:crushing"] = "crushing", ["create:milling"] = "milling",
   ["create:cutting"] = "sawing",
+  -- Stonecutter recipes, made by a saw whose filter the computer sets (station.saw)
+  ["minecraft:stonecutting"] = "stonecutting",
   -- Deployer on a depot: manual application (andesite casing) or deploying
   ["create:item_application"] = "deploying", ["create:deploying"] = "deploying",
 }
@@ -126,14 +72,6 @@ end
 
 -- `name` has a recipe that uses no item of `avoid` (set of names)
 local function hasRecipe(name, avoid)
-  for _, r in ipairs(list) do
-    if r.output.name == name then
-      local free = true
-      for _, item in pairs(r.grid or {}) do if avoid[item] then free = false end end
-      for item in pairs(r.inputs or {}) do if avoid[item] then free = false end end
-      if free then return true end
-    end
-  end
   for _, raw in ipairs(gameRecipes(name)) do
     if TYPE_MACHINE[raw.type] and raw.output and raw.output.name == name then
       local free = true
@@ -173,26 +111,36 @@ end
 -- else the first one that has a recipe. Never through another alternative of the slot
 -- (planks: wood is made from logs, so ask for logs). Slots with the same alternatives
 -- take the same item (two woods are never mixed in one batch).
-local function pick(alts, stock, chosen)
+-- `skip`: the recipe's result, never chosen (a stone tag holds cut veridium, which would
+-- be circular) but still an alternative to avoid: the stairs, made from cut veridium,
+-- must not look like a way out
+-- `avoid` (optional set): items being crafted by the recipes above, never chosen either
+-- (no stock: the sub-craft would loop back to them)
+local function pick(alts, stock, chosen, skip, avoid)
   local key = table.concat(alts, ",")
   if chosen[key] then return chosen[key] end
-  local best, most = alts[1], 0
+  local options = {}
   for _, a in ipairs(alts) do
+    if a ~= skip and not (avoid and avoid[a]) then options[#options + 1] = a end
+  end
+  if not options[1] then options = alts end
+  local best, most = options[1], 0
+  for _, a in ipairs(options) do
     local n = stock and stock[a] or 0
     if n > most then best, most = a, n end
   end
-  if most == 0 and alts[2] then
+  if most == 0 and options[2] then
     local set = {}
     for _, a in ipairs(alts) do set[a] = true end
     local found = false
     if stock then
-      for _, a in ipairs(alts) do
+      for _, a in ipairs(options) do
         local n = fromStock(a, set, stock)
         if n > most then best, most, found = a, n, true end
       end
     end
     if not found then
-      for _, a in ipairs(alts) do
+      for _, a in ipairs(options) do
         if hasRecipe(a, set) then best = a; break end
       end
     end
@@ -202,7 +150,8 @@ local function pick(alts, stock, chosen)
 end
 
 -- Game recipe (API format) -> internal format; nil if the machine is not supported
-function recipes.convert(raw, stock)
+-- `avoid` (optional set): items never chosen among the alternatives (see pick)
+function recipes.convert(raw, stock, avoid)
   local machine = TYPE_MACHINE[raw.type]
   if not machine or not raw.output then return nil end
   local r = {
@@ -211,6 +160,21 @@ function recipes.convert(raw, stock)
     chance = raw.output.chance, heat = raw.heat,
   }
   local chosen = {}
+  -- The result itself is never chosen among the alternatives of its ingredients (pick)
+  local function choose(alts)
+    local n = pick(alts, stock, chosen, r.output.name, avoid)
+    local others = {}
+    for _, a in ipairs(alts) do
+      if a == n or (a ~= r.output.name and not (avoid and avoid[a])) then
+        others[#others + 1] = a
+      end
+    end
+    if others[2] then
+      r.alts = r.alts or {}
+      r.alts[n] = others
+    end
+    return n
+  end
   if machine == "turtle" then
     local w = raw.width
     if w and (w > 3 or raw.height > 3) then return nil end
@@ -219,18 +183,18 @@ function recipes.convert(raw, stock)
       -- Shaped recipe: slot i of the recipe (width w) -> slot of the 3x3 grid
       local cell = w and (math.floor((i - 1) / w) * 3 + (i - 1) % w + 1) or i
       if cell > 9 then return nil end
-      if alts[1] then r.grid[cell] = pick(alts, stock, chosen) end
+      if alts[1] then r.grid[cell] = choose(alts) end
     end
   else
     -- Deployer: the placed item, then the held item
     if machine == "deploying" and #raw.ingredients ~= 2 then return nil end
     r.inputs = {}
     for _, alts in ipairs(raw.ingredients) do
-      local n = pick(alts, stock, chosen)
+      local n = choose(alts)
       r.inputs[n] = (r.inputs[n] or 0) + 1
     end
     if machine == "deploying" then
-      r.held = pick(raw.ingredients[2], stock, chosen)
+      r.held = choose(raw.ingredients[2])
       if r.inputs[r.held] ~= 1 then return nil end -- placed = held: not supported
     end
   end
@@ -260,20 +224,14 @@ function recipes.get(id, stock)
 end
 
 -- The same game recipe, its alternatives chosen again with `stock`: the stock may have
--- changed since the recipe was displayed. Unchanged if it comes from recipes.db.
+-- changed since the recipe was displayed
 function recipes.refresh(r, stock)
-  for _, mine in ipairs(list) do
-    if mine == r then return r end
-  end
   return r.id and recipes.get(r.id, stock) or r
 end
 
 ---------------------------------------------------------------- lookup
 
 function recipes.find(outputName)
-  for i, r in ipairs(list) do
-    if r.output.name == outputName then return r, i end
-  end
   return recipes.findAll(outputName)[1]
 end
 
@@ -296,22 +254,16 @@ local function signature(r)
   }, "|")
 end
 
--- Every recipe that produces `outputName` (an item can have several): those from
--- recipes.db, then the game's for the other machines, without duplicates.
--- `stock` (optional) is used to choose among the alternatives of an ingredient.
-function recipes.findAll(outputName, stock)
-  local t, mine, seen = {}, {}, {}
+-- Every recipe that produces `outputName` (an item can have several), without duplicates
+-- `stock` (optional) is used to choose among the alternatives of an ingredient, `avoid`
+-- (optional set) holds the items never chosen among them (see pick).
+function recipes.findAll(outputName, stock, avoid)
+  local t, seen = {}, {}
   local function keep(r)
     local sig = signature(r)
     if not seen[sig] then
       seen[sig] = true
       t[#t + 1] = r
-    end
-  end
-  for _, r in ipairs(list) do
-    if r.output.name == outputName then
-      keep(r)
-      mine[recipes.machine(r)] = true
     end
   end
   local raws = gameRecipes(outputName)
@@ -323,9 +275,9 @@ function recipes.findAll(outputName, stock)
   for _, raw in ipairs(raws) do
     local machine = TYPE_MACHINE[raw.type]
     -- getFor also returns recipes where the item is only a by-product
-    if machine and not mine[machine] and raw.output and raw.output.name == outputName
+    if machine and raw.output and raw.output.name == outputName
        and not (smoked and machine == "blasting") then
-      local r = recipes.convert(raw, stock)
+      local r = recipes.convert(raw, stock, avoid)
       if r then keep(r) end
     end
   end
@@ -336,72 +288,61 @@ end
 -- (items[i] = { name, label, machines }). `machines` (optional): set of available
 -- machines, to keep only what the workshop can make.
 function recipes.listItems(query, offset, limit, machines)
-  if api then
-    local types
-    if machines then
-      types = {}
-      for t, m in pairs(TYPE_MACHINE) do
-        if machines[m] then types[#types + 1] = t end
-      end
-    end
-    local ok, res = pcall(api.listItems, query or "", offset, limit, types)
-    if not ok then return 0, {} end
-    local items = {}
-    for i, it in ipairs(res.items) do
-      apiNames[it.name] = it.label
-      local ms = {}
-      for _, t in ipairs(it.types) do ms[#ms + 1] = TYPE_MACHINE[t] end
-      items[i] = { name = it.name, label = it.label, machines = ms }
-    end
-    return res.total, items
-  end
-  -- Without the mod: the items of recipes.db
-  local seen, all = {}, {}
-  for _, r in ipairs(recipes.search(query)) do
-    local n = r.output.name
-    if not machines or machines[recipes.machine(r)] then
-      if not seen[n] then
-        seen[n] = { name = n, label = recipes.displayName(n), machines = {} }
-        all[#all + 1] = seen[n]
-      end
-      table.insert(seen[n].machines, recipes.machine(r))
+  if not api then return 0, {} end
+  local types
+  if machines then
+    types = {}
+    for t, m in pairs(TYPE_MACHINE) do
+      if machines[m] then types[#types + 1] = t end
     end
   end
+  local ok, res = pcall(api.listItems, query or "", offset, limit, types)
+  if not ok then return 0, {} end
   local items = {}
-  for i = offset + 1, math.min(#all, offset + limit) do items[#items + 1] = all[i] end
-  return #all, items
+  for i, it in ipairs(res.items) do
+    apiNames[it.name] = it.label
+    local ms = {}
+    for _, t in ipairs(it.types) do ms[#ms + 1] = TYPE_MACHINE[t] end
+    items[i] = { name = it.name, label = it.label, machines = ms }
+  end
+  return res.total, items
 end
 
--- Same item made on the same machine = same recipe
-local function indexOf(r)
-  for i, other in ipairs(list) do
-    if other == r then return i end
+-- Stock of ingredient `name` of `r`: with a tag ingredient, every item of the tag
+function recipes.inStock(r, name, stock)
+  local n = math.max(0, stock[name] or 0)
+  for _, a in ipairs(r.alts and r.alts[name] or {}) do
+    if a ~= name then n = n + math.max(0, stock[a] or 0) end
   end
-  for i, other in ipairs(list) do
-    if other.output.name == r.output.name and recipes.machine(other) == recipes.machine(r) then
-      return i
+  return n
+end
+
+-- `name` has a recipe that uses no item of `set` ({ [name] = true }): it can be made
+-- from outside a tag
+recipes.madeOutside = hasRecipe
+
+-- Copy of `r` that uses `to` instead of `from` (another item of a tag ingredient); its
+-- ingredients are then fixed (no alts)
+function recipes.variant(r, from, to)
+  local v = {}
+  for k, x in pairs(r) do v[k] = x end
+  if r.grid then
+    v.grid = {}
+    for i = 1, 9 do v.grid[i] = r.grid[i] == from and to or r.grid[i] end
+  end
+  if r.inputs then
+    v.inputs = {}
+    for n, c in pairs(r.inputs) do
+      local m = n == from and to or n
+      v.inputs[m] = (v.inputs[m] or 0) + c
     end
   end
+  if r.held == from then v.held = to end
+  v.alts = nil
+  return v
 end
 
--- Adds or replaces (same item, same machine); returns true if replaced
-function recipes.add(r)
-  local idx = indexOf(r)
-  if idx then list[idx] = r else table.insert(list, r) end
-  indexNames()
-  sort()
-  recipes.save()
-  return idx ~= nil
-end
-
-function recipes.remove(r)
-  local idx = indexOf(r)
-  if idx then table.remove(list, idx) end
-  indexNames()
-  recipes.save()
-end
-
--- Machine that makes the recipe; old recipes do not have this field
+-- Machine that makes the recipe (no field for the turtle)
 function recipes.machine(r)
   return r.machine or "turtle"
 end
@@ -410,7 +351,7 @@ local MACHINE_LABELS = {
   pressing = "press", mixing = "mixer", compacting = "compacting",
   filling = "spout", emptying = "draining",
   washing = "washing", smoking = "smoking", blasting = "blasting", haunting = "haunting",
-  crushing = "crushing", milling = "millstone", sawing = "saw", deploying = "deployer",
+  crushing = "crushing", milling = "millstone", sawing = "saw", stonecutting = "saw", deploying = "deployer",
 }
 
 -- Probability of getting the result on each craft (random outputs); 1 by default
@@ -471,7 +412,7 @@ function recipes.craftable(r, stock)
   local best = math.huge
   for _, src in ipairs({ recipes.needs(r), recipes.fluids(r) }) do
     for name, per in pairs(src) do
-      best = math.min(best, math.floor((stock[name] or 0) * recipes.chance(r) / per))
+      best = math.min(best, math.floor(recipes.inStock(r, name, stock) * recipes.chance(r) / per))
     end
   end
   return best == math.huge and 0 or best

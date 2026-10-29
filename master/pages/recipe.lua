@@ -1,5 +1,5 @@
--- pages/recipe.lua: recipes of an item the workshop can make (those of recipes.db
--- first), one at a time; < > to go from one to the other when there are several.
+-- pages/recipe.lua: recipes of an item the workshop can make, one at a time; < > to go
+-- from one to the other when there are several.
 -- "ADD" puts the recipe into the order of the main screen; opened from a line of the
 -- order, the page changes or removes it. The quantity can also be set with the
 -- keyboard (arrows, Page Up/Down, digits, Enter).
@@ -29,24 +29,24 @@ return function(ctx)
     status:set("text", text)
   end
 
-  -- 3x3 grid + result
-  local cw = math.max(4, math.min(12, math.floor((W - 18) / 3)))
+  -- 3x3 grid on the whole width (full ingredient names), then the quantity row, then
+  -- the result, the stock and what is possible under it
+  local cw = math.max(4, math.floor((W - 4) / 3))
   local grid = page:add(ui.CraftGrid{
-    x = 2, y = 3, cellW = cw, rowGap = 1,
+    x = math.floor((W - (cw * 3 + 2)) / 2) + 1, y = 3, cellW = cw, rowGap = 1,
     onClick = function(_, i, cell)
       if not cell then return end
       local input = recipes.displayGrid(current)[i]
       local need = recipes.needs(current)[input] * qty
-      setStatus(("%s: %d/%d"):format(name(input), storage.count(input), need), colors.lightGray)
+      local tag = current.alts and current.alts[input] and " (or same tag)" or ""
+      setStatus(("%s%s: %d/%d"):format(name(input), tag, recipes.inStock(current, input, storage.stock), need),
+                colors.lightGray)
     end,
   })
 
-  local gx = grid.x + grid.w + 1
-  local stockLabel = page:add(ui.Label{ x = gx, y = 3, w = W - gx + 1, text = "" })
-  page:add(ui.Label{ x = gx, y = 5, text = "=>" })
-  local outLabel = page:add(ui.Label{ x = gx + 3, y = 5, w = W - gx - 2, text = "", fg = colors.yellow })
-  local maxLabel = page:add(ui.Label{ x = gx, y = 7, w = W - gx + 1, text = "" })
-  -- Centered quantity row: -10 -1 [x1] +1 +10 Max
+  local outLabel = page:add(ui.Label{ x = 1, y = 10, w = W, text = "", align = "center", fg = colors.yellow })
+  local stockLabel = page:add(ui.Label{ x = 1, y = 11, w = W, text = "", align = "center" })
+  -- Centered quantity row, under the grid: -10 -1 [x1] +1 +10 Max
   local qx = math.floor((W - 33) / 2) + 1
   local qtyLabel = page:add(ui.Label{ x = qx + 9, y = 9, w = 9, text = "", align = "center" })
 
@@ -60,7 +60,7 @@ return function(ctx)
       grid:setCells({})
       title:set("text", name(item))
       outLabel:set("text", ""); stockLabel:set("text", "Stock: " .. storage.count(item))
-      maxLabel:set("text", ""); qtyLabel:set("text", "")
+      qtyLabel:set("text", "")
       setStatus("No recipe for the workshop's machines", colors.red)
       return
     end
@@ -71,7 +71,7 @@ return function(ctx)
       local input = display[i]
       if input then
         local bg = colors.green
-        if storage.count(input) < needs[input] * qty then
+        if recipes.inStock(r, input, storage.stock) < needs[input] * qty then
           bg = recipes.find(input) and colors.orange or colors.red
         end
         cells[i] = { text = name(input), bg = bg, fg = colors.black }
@@ -80,9 +80,9 @@ return function(ctx)
     grid:setCells(cells)
     local label = recipes.machineLabel(r)
     title:set("text", name(r.output.name) .. (label and (" [" .. label .. "]") or ""))
-    outLabel:set("text", r.output.count .. "x " .. name(r.output.name))
-    stockLabel:set("text", "Stock: " .. storage.count(r.output.name))
-    maxLabel:set("text", "Possible: x" .. recipes.craftable(r, storage.stock))
+    outLabel:set("text", "=> " .. r.output.count .. "x " .. name(r.output.name))
+    stockLabel:set("text", ("Stock: %d   Possible: x%d"):format(
+      storage.count(r.output.name), recipes.craftable(r, storage.stock)))
     local s = "x" .. qty
     if r.output.count > 1 then s = s .. " =" .. qty * r.output.count end
     qtyLabel:set("text", s)
@@ -169,10 +169,10 @@ return function(ctx)
   end
   local nx = math.floor((W - 15) / 2) + 1
   navBtns = {
-    page:add(ui.Button{ x = nx, y = 11, w = 4, h = 3, text = "<", onClick = function() choose(index - 1) end }),
-    page:add(ui.Button{ x = nx + 11, y = 11, w = 4, h = 3, text = ">", onClick = function() choose(index + 1) end }),
+    page:add(ui.Button{ x = nx, y = 12, w = 4, h = 3, text = "<", onClick = function() choose(index - 1) end }),
+    page:add(ui.Button{ x = nx + 11, y = 12, w = 4, h = 3, text = ">", onClick = function() choose(index + 1) end }),
   }
-  navLabel = page:add(ui.Label{ x = nx + 4, y = 12, w = 7, text = "", align = "center" })
+  navLabel = page:add(ui.Label{ x = nx + 4, y = 13, w = 7, text = "", align = "center" })
 
   -- Recipes of `name` the workshop can make (known machine and configured station),
   -- asked for when the page opens

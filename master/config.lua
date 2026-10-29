@@ -17,8 +17,8 @@
 --                  storage. Network names, or { name, label }:
 --                  [ "minecraft:chest_0", { "name": "minecraft:chest_30", "label": "Workshop" } ]
 --                  Old output key (single output): read as outputs = [ output ]
---   trash        : trash (drop into lava): "Empty" button on the main screen;
---                  missing = no button
+--   trash        : trash (drop into lava): the detection empties the tested chests
+--                  into it; missing = they go back to storage
 --   stations     : Create stations, per recipe machine (network names of the blocks)
 --     timeout : seconds without a new result before giving up (30 by default)
 --     Block broken and placed again (basin_0 -> basin_1): found again on its own if
@@ -37,6 +37,8 @@
 --       items flow, inlet chest (inlet) -> machine -> output chest (output)
 --       idle: inlet empty and nothing new for idle s = pass over (10 by default)
 --       retries: extra passes if the result is missing (3 by default)
+--       saw (sawing): the mechanical saw on the network; its filter is set for each
+--         batch, and the station also makes the stonecutter recipes
 --   fluidStorage : fluid tanks (one fluid per tank); missing = every fluid tank
 --   fuel         : blaze burner fuels, per level (the first one in stock is used)
 --   logFile      : order log; missing = DATA_DIR/log.txt

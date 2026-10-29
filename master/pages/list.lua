@@ -3,10 +3,9 @@
 -- search, the items found as tiles, one page at a time (like JEI). CRAFT opens the
 -- craft tracking (pages/crafts.lua). The list and the total come from the AutoCrafter
 -- Link mod; only the items the workshop can make (machine with a station)
--- are shown. The output of the order is chosen under the list; "Empty" sends that
--- output to the trash (config.trash). "Stations": pages/stations.lua.
+-- are shown. The output of the order is chosen under the list. "Stations":
+-- pages/stations.lua.
 
-local config = require("config")
 local ui = require("ui")
 local recipes = require("recipes")
 local crafter = require("crafter")
@@ -30,8 +29,14 @@ return function(ctx)
     onClick = function() app:show("stations") end,
   })
   page:add(ui.Label{
-    x = 9, y = 1, w = W - 12, text = "AUTO-CRAFTER",
+    x = 9, y = 1, w = W - 18, text = "AUTO-CRAFTER",
     align = "center", fg = colors.black, bg = colors.cyan,
+  })
+  -- Material Checklist of a Schematicannon on a lectern: its missing items go into the order
+  local order = {}
+  page:add(ui.Button{
+    x = W - 9, y = 1, w = 6, h = 1, text = "Book",
+    onClick = function() order.fromBook() end,
   })
   local function updateStations()
     local state = network.state
@@ -82,7 +87,7 @@ return function(ctx)
   })
 
   -- Output of the order, under the list: a click goes to the next one (stations.outputs),
-  -- then to the storage (the product stays there). "Empty" empties the chosen output
+  -- then to the storage (the product stays there)
   local chosen -- name of the chosen output, false = storage, nil = the first one
   local function selectedOutput()
     local outs = stations.outputs()
@@ -98,7 +103,9 @@ return function(ctx)
   local orderList = page:add(ui.List{
     x = 1, y = 4, w = W, h = H - 6, altBg = colors.gray,
     emptyText = "Search an item to add",
-    onSelect = function(_, it) ctx.pages.recipe.edit(it.line) end,
+    onSelect = function(_, it)
+      if not it.line.recipe.stock then ctx.pages.recipe.edit(it.line) end
+    end,
   })
 
   -- Machines that have a station (the turtle always has one)
@@ -107,21 +114,14 @@ return function(ctx)
     if stations.pool(m)[1] then machines[m] = true end
   end
 
-  -- Bottom bar: paging (search) or Crafts + Empty + Logs + Scan + CRAFT (order)
-  local prev, pageLabel, nextBtn, craftsBtn, trashBtn, craftBtn, scanBtn
-  local CONFIRM = 5 -- seconds to confirm "Empty" with a 2nd click
-  local armed -- os.clock() of the 1st click on "Empty"
-
-  local function disarm()
-    armed = nil
-    trashBtn:set("text", "Empty")
-    trashBtn:set("bg", colors.blue)
-  end
+  -- Bottom bar: paging (search) or Crafts + Logs + Scan + CRAFT (order)
+  local prev, pageLabel, nextBtn, craftsBtn, craftBtn, scanBtn
 
   function updateOrder()
     local items = {}
     for i, l in ipairs(lines) do
-      items[i] = { text = name(l.recipe.output.name), right = tostring(l.qty * l.recipe.output.count), line = l }
+      local text = name(l.recipe.output.name) .. (l.recipe.stock and " (stock)" or "")
+      items[i] = { text = text, right = tostring(l.qty * l.recipe.output.count), line = l }
     end
     orderList:setItems(items)
     local out, outs = selectedOutput()
@@ -144,8 +144,6 @@ return function(ctx)
     prev.hidden, pageLabel.hidden, nextBtn.hidden = not searching, not searching, not searching
     orderTitle.hidden, orderList.hidden, outBtn.hidden = searching, searching, searching
     craftsBtn.hidden, craftBtn.hidden, scanBtn.hidden = searching, searching, searching
-    trashBtn.hidden = searching or not (config.trash and selectedOutput())
-    disarm()
     updateStations()
     if searching then
       local total, items = recipes.listItems(search.value, pageNo * perPage, perPage, machines)
@@ -183,34 +181,15 @@ return function(ctx)
     x = 2, y = y, w = 9, h = 3, text = "Crafts",
     onClick = function() app:show("crafts") end,
   })
-  -- 1st click: "Sure?" in red; 2nd click within CONFIRM s: everything goes to the lava
-  trashBtn = page:add(ui.Button{
-    x = 12, y = y, w = 6, h = 3, text = "Empty",
-    onClick = function()
-      if not (armed and os.clock() - armed < CONFIRM) then
-        armed = os.clock()
-        trashBtn:set("text", "Sure?")
-        trashBtn:set("bg", colors.red)
-        return
-      end
-      disarm()
-      local out = selectedOutput()
-      if not (out and peripheral.isPresent(out.name) and peripheral.isPresent(config.trash)) then
-        notice = { text = "Output or trash not found" }
-      else
-        local moved, left = storage.moveAll(out.name, config.trash)
-        notice = left > 0 and { text = ("Trash full: %d items left"):format(left) }
-                 or { text = ("Output emptied: %d items"):format(moved), ok = true }
-      end
-      updateOrder()
-    end,
-  })
   craftBtn = page:add(ui.Button{
     x = W - 7, y = y, w = 7, h = 3, text = "CRAFT", bg = colors.gray, fg = colors.black,
     onClick = function()
       if not lines[1] then return end
       local out = selectedOutput()
-      for _, l in ipairs(lines) do crafter.order(l.recipe, l.qty, out and out.name or false) end
+      -- A stock line only sends from stock to an output: kept in storage, nothing to do
+      for _, l in ipairs(lines) do
+        if out or not l.recipe.stock then crafter.order(l.recipe, l.qty, out and out.name or false) end
+      end
       for i = #lines, 1, -1 do lines[i] = nil end
       notice = nil
       refresh()
@@ -294,12 +273,12 @@ return function(ctx)
   end
 
   page:add(ui.Button{
-    x = 19, y = y, w = 6, h = 3, text = "Logs",
+    x = 12, y = y, w = 6, h = 3, text = "Logs",
     onClick = function() ctx.pages.logs.open(nil) end,
   })
   -- Runs the network detection again (pages/detector.lua asks: everything, or additional)
   scanBtn = page:add(ui.Button{
-    x = 26, y = y, w = 5, h = 3, text = "Scan",
+    x = 19, y = y, w = 5, h = 3, text = "Scan",
     onClick = function()
       local s = crafter.status
       if s.running[1] or s.queue[1] then
@@ -310,8 +289,7 @@ return function(ctx)
     end,
   })
 
-  -- Order being prepared, used by the recipe page
-  local order = {}
+  -- Order being prepared, used by the recipe page (`order` is declared with the Book button)
 
   -- Adds `qty` crafts of `recipe`; clears the search to come back to the order.
   -- One line per item: if the item is already there (even with another recipe), its
@@ -351,6 +329,144 @@ return function(ctx)
     if app.current == "list" then refresh() end
   end
 
+  -- Material Checklist on a lectern of the network (lectern peripheral of the mod): every
+  -- item is ordered in full; sent to an output, the order takes the stock first and
+  -- crafts the rest (crafter.lua) with the item's first recipe that has a station (a
+  -- possible one first). An item without such a recipe is sent from stock only (stock
+  -- line); what the stock lacks for it goes to the log
+  local function findLectern()
+    return peripheral.find("lectern", function(_, p) return p.getChecklist ~= nil end)
+  end
+
+  -- What the book would add, without touching the order:
+  -- { adds = { { recipe, items } }, missing = { "120 Stone" } }, or nil + message
+  local function readBook()
+    local lectern = findLectern()
+    if not lectern then return nil, "No lectern on the network" end
+    local items = lectern.getChecklist()
+    if not items then return nil, "No book on the lectern" end
+    storage.scan()
+    local book = { adds = {}, missing = {} }
+    for _, it in ipairs(items) do
+      local short = it.count - storage.count(it.name)
+      local chosen
+      for _, r in ipairs(recipes.findAll(it.name, storage.stock)) do
+        local m = recipes.machine(r)
+        if crafter.machines[m] and stations.pool(m, r.heat)[1] then
+          chosen = chosen or r
+          if short <= 0 or crafter.feasible(r, math.ceil(short / r.output.count)) then chosen = r break end
+        end
+      end
+      local items = it.count
+      if not chosen then
+        -- Not craftable: what the stock has
+        items = math.min(it.count, storage.count(it.name))
+        if short > 0 then book.missing[#book.missing + 1] = recipes.amount(short, it.name) end
+        if items > 0 then
+          chosen = { output = { name = it.name, count = 1 }, stock = true, machine = "stock" }
+        end
+      end
+      if chosen then book.adds[#book.adds + 1] = { recipe = chosen, items = items } end
+    end
+    return book
+  end
+
+  -- Read twice, the book does not order twice: an existing line gets at least its amount
+  local function applyBook(book)
+    for _, a in ipairs(book.adds) do
+      local line
+      for _, l in ipairs(lines) do
+        if l.recipe.output.name == a.recipe.output.name then line = l end
+      end
+      if not line then
+        line = { recipe = a.recipe, qty = 0 }
+        lines[#lines + 1] = line
+      end
+      line.qty = math.min(9999, math.max(line.qty, math.ceil(a.items / line.recipe.output.count)))
+    end
+    local added, missing = #book.adds, book.missing
+    if missing[1] then crafter.log(nil, "Book: not craftable, missing " .. table.concat(missing, ", ")) end
+    notice = missing[1] and { text = ("Book: %d added, %d missing (Logs)"):format(added, #missing) }
+             or { text = ("Book: %d added"):format(added), ok = true }
+  end
+
+  function order.fromBook()
+    local book, err = readBook()
+    if book then applyBook(book) else notice = { text = err } end
+    search.value = "" -- back to the order (setValue would clear the notice)
+    refresh()
+  end
+
+  -- Popup when a new checklist is put on the lectern (watchBook below): Add / Ignore.
+  -- Added last, it is above the page; `blocker` takes the clicks around it
+  local popup, pending = {}, nil
+  local bw = math.min(W - 2, 30)
+  local bx, by = math.floor((W - bw) / 2) + 1, math.floor((H - 6) / 2) + 1
+  local blocker = ui.Label{ x = 1, y = 1, w = W, h = H }
+  blocker.draw = function() end
+  blocker.click = function() end
+  popup[1] = page:add(blocker)
+  popup[2] = page:add(ui.Label{ x = bx, y = by, w = bw, text = "Schematicannon book",
+                                align = "center", fg = colors.black, bg = colors.cyan })
+  local popupLines = {}
+  for i = 1, 4 do
+    popupLines[i] = page:add(ui.Label{ x = bx, y = by + i, w = bw, align = "center", bg = colors.gray })
+    popup[#popup + 1] = popupLines[i]
+  end
+  local function closePopup()
+    pending = nil
+    for _, w in ipairs(popup) do w.hidden = true end
+  end
+  popup[#popup + 1] = page:add(ui.Button{
+    x = bx + 1, y = by + 3, w = math.floor(bw / 2) - 1, h = 1, text = "Add", bg = colors.green,
+    onClick = function()
+      local book = pending
+      closePopup()
+      applyBook(book)
+      search.value = ""
+      refresh()
+    end,
+  })
+  popup[#popup + 1] = page:add(ui.Button{
+    x = bx + math.floor(bw / 2) + 1, y = by + 3, w = bw - math.floor(bw / 2) - 2, h = 1,
+    text = "Ignore", bg = colors.red, onClick = closePopup,
+  })
+  closePopup()
+
+  -- "checklist" event of watchBook: the book is read and the popup shown on this page
+  local function onBook()
+    if app.current == "detector" then return end
+    local book = readBook()
+    if not book or not (book.adds[1] or book.missing[1]) then return end
+    pending = book
+    popupLines[1]:set("text", ("%d items to order"):format(#book.adds))
+    popupLines[2]:set("text", book.missing[1] and ("%d missing, not craftable"):format(#book.missing) or "")
+    for _, w in ipairs(popup) do w.hidden = false end
+    if app.current ~= "list" then app:show("list") end
+  end
+
+  -- Runs beside the UI: every BOOK_POLL s, the fingerprint of the checklist on the lectern
+  -- (getBookId, the pages are not read); a new one sends the "checklist" event. A book
+  -- taken off then put back counts as new; the book already there at startup does not
+  -- (Book button)
+  local BOOK_POLL = 2
+  local function bookId()
+    local lectern = findLectern()
+    local ok, id = pcall(function() return lectern and lectern.getBookId() end)
+    return ok and id or nil
+  end
+  local function watchBook()
+    local last = bookId()
+    while true do
+      sleep(BOOK_POLL)
+      local id = bookId()
+      if id ~= last then
+        last = id
+        if id then os.queueEvent("checklist") end
+      end
+    end
+  end
+
   order.lines = lines
 
   page.onShow = refresh
@@ -387,9 +503,9 @@ return function(ctx)
     page = page,
     order = order,
     onNetwork = onNetwork,
-    -- "Sure?" does not stay displayed after the confirmation delay
+    onBook = onBook,
+    watchBook = watchBook,
     tick = function()
-      if armed and os.clock() - armed >= CONFIRM then disarm() end
       if notice and notice.expires and os.clock() >= notice.expires then
         notice = nil
         updateOrder()

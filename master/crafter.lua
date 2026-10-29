@@ -34,6 +34,7 @@ local machines = {
 for _, m in ipairs({ "washing", "smoking", "blasting", "haunting", "crushing", "milling", "sawing" }) do
   machines[m] = require("machines.flow")
 end
+machines.stonecutting = machines.sawing -- same stations, with their saw (stations.pool)
 crafter.machines = machines
 
 -- Layered virtual stock: a try writes into its layer, which is kept (commit) if it
@@ -50,10 +51,11 @@ end
 
 local plan
 
--- Recipes of `item`, those whose ingredients are in stock first
-local function candidates(item, n, stock)
+-- Recipes of `item`, those whose ingredients are in stock first. Their tag ingredients
+-- never use an item of `visiting` (being crafted above: that would be circular)
+local function candidates(item, n, stock, visiting)
   local direct, other = {}, {}
-  for _, r in ipairs(recipes.findAll(item, stock)) do
+  for _, r in ipairs(recipes.findAll(item, stock, visiting)) do
     local ok = true
     for input, want in pairs(recipes.expected(r, math.ceil(n / r.output.count))) do
       if stock[input] < want then ok = false; break end
@@ -66,9 +68,10 @@ end
 
 -- Produces `n` items (or mB) of `item` with the first possible recipe;
 -- returns the task, or nil + problem (the one of the preferred recipe)
+local CIRCULAR = "Circular recipe: "
 local function provide(item, n, stock, tasks, visiting)
-  if visiting[item] then return nil, { err = "Circular recipe: " .. name(item) } end
-  local list = candidates(item, n, stock)
+  if visiting[item] then return nil, { err = CIRCULAR .. name(item) } end
+  local list = candidates(item, n, stock, visiting)
   if not list[1] then return nil, { missing = { [item] = n } } end
   local best
   for _, r in ipairs(list) do
@@ -109,9 +112,71 @@ local function planFuel(recipe, times, task, stock, tasks, visiting)
   return problem
 end
 
+-- Recipe with a tag ingredient (recipe.alts): the crafts are shared among the items of
+-- the tag in stock (the chosen one first), one task per item; the rest is crafted from
+-- an item of the tag that has a recipe outside the tag (stone tags: none, the stone is
+-- missing). Several tasks: the last one waits for the others and stands for them all
+local function planSplit(recipe, times, stock, tasks, visiting)
+  local item, alts = next(recipe.alts)
+  local per = recipes.needs(recipe)[item]
+  local set = { [recipe.output.name] = true }
+  for _, a in ipairs(alts) do set[a] = true end
+  local order = { item }
+  for _, a in ipairs(alts) do
+    if a ~= item then order[#order + 1] = a end
+  end
+  local mine, myTasks, parts, left = layer(stock), {}, {}, times
+  for _, a in ipairs(order) do
+    local n = math.min(left, math.floor(math.max(0, mine[a]) * recipes.chance(recipe) / per))
+    if n > 0 then
+      local task, problem = plan(recipes.variant(recipe, item, a), n, mine, myTasks, visiting)
+      if not task then return nil, problem end
+      parts[#parts + 1] = task
+      left = left - n
+    end
+  end
+  if left > 0 then
+    -- Below, no item of the tag is made from the tag again (block <- slab <- tag...):
+    -- that only loops, through every item of the tag (15 stones: it never ends)
+    local added = {}
+    for a in pairs(set) do
+      if not visiting[a] then added[#added + 1] = a end
+    end
+    local task, best
+    for _, a in ipairs(order) do
+      if recipes.madeOutside(a, set) then
+        for _, x in ipairs(added) do visiting[x] = x ~= a or nil end
+        local problem
+        task, problem = plan(recipes.variant(recipe, item, a), left, mine, myTasks, visiting)
+        if task then break end
+        if not best or (problem.missing and not best.missing) then best = problem end
+      end
+    end
+    for _, x in ipairs(added) do visiting[x] = nil end
+    -- Only loops: the base item of the tag is what is missing
+    if best and best.err and best.err:sub(1, #CIRCULAR) == CIRCULAR then best = nil end
+    if not task then
+      if best then return nil, best end
+      -- Nothing of the tag can be made: the shortest id is its base item (create:veridium)
+      local base = item
+      for _, a in ipairs(alts) do
+        if #a < #base then base = a end
+      end
+      return nil, { missing = { [base] = math.ceil(per * left / recipes.chance(recipe)) } }
+    end
+    parts[#parts + 1] = task
+  end
+  local last = parts[#parts]
+  for i = 1, #parts - 1 do last.deps[#last.deps + 1] = parts[i] end
+  commit(mine, stock)
+  for _, t in ipairs(myTasks) do tasks[#tasks + 1] = t end
+  return last
+end
+
 -- Adds to `tasks` the task of `recipe` x`times` after those of its sub-crafts;
 -- returns the task, or nil + problem. On failure, `stock` and `tasks` do not change.
 function plan(recipe, times, stock, tasks, visiting)
+  if recipe.alts then return planSplit(recipe, times, stock, tasks, visiting) end
   local output = recipe.output.name
   local machineName = recipes.machine(recipe)
   local machine = machines[machineName]
@@ -221,16 +286,40 @@ local function stockView(free)
   end })
 end
 
+-- Plan of an order on `stock`: sent to an output, the product already in stock is
+-- taken first and only the rest is crafted (into storage, the whole order is crafted).
+-- A stock-only recipe (recipe.stock: item without a recipe) is never crafted.
+-- Returns the tasks and the count taken from stock, or nil + problem
+local function planOrder(recipe, times, stock, output)
+  local craftTimes, fromStock = times, 0
+  if output and not recipe.output.fluid then
+    local want = times * recipe.output.count
+    fromStock = math.min(want, math.max(0, stock[recipe.output.name]))
+    craftTimes = math.ceil((want - fromStock) / recipe.output.count)
+    stock = layer(stock)
+    stock[recipe.output.name] = stock[recipe.output.name] - fromStock -- kept for the order
+  end
+  local tasks = {}
+  if craftTimes > 0 then
+    if recipe.stock then
+      return nil, { missing = { [recipe.output.name] = craftTimes * recipe.output.count } }
+    end
+    local _, problem = plan(recipe, craftTimes, stock, tasks, {})
+    if problem then return nil, problem end
+  end
+  return tasks, fromStock
+end
+
 -- Prepares an order on the free stock: alternatives chosen again, craft tree.
 -- `output`: inventory that receives the final product (nil = it stays in storage).
 -- Returns the job, or nil + message. Nothing is started.
 local function prepare(recipe, times, report, log, output)
   recipe = recipes.refresh(recipe, stockView(true))
-  local tasks = {}
-  local _, problem = plan(recipe, times, stockView(true), tasks, {})
-  if problem then return nil, describe(problem) end
+  local tasks, fromStock = planOrder(recipe, times, stockView(true), output)
+  if not tasks then return nil, describe(fromStock) end
   local job = { recipe = recipe, tasks = tasks, done = 0, total = 0,
                 report = report or function() end, log = log or function() end }
+  if fromStock > 0 then job.log("From stock: " .. recipes.amount(fromStock, recipe.output.name)) end
   for _, t in ipairs(tasks) do
     t.left, t.running = t.times, 0
     job.total = job.total + t.times
@@ -515,8 +604,8 @@ local function startQueued()
       job.order = order
       jobs[#jobs + 1] = job
       running[#running + 1] = order
-    elseif jobs[1] and plan(recipes.refresh(order.recipe, stockView(false)), order.times,
-                            stockView(false), {}, {}) then
+    elseif jobs[1] and planOrder(recipes.refresh(order.recipe, stockView(false)), order.times,
+                                 stockView(false), order.output) then
       if not order.waiting then crafter.log(order, "Waiting: " .. err) end
       order.waiting = true
       i = i + 1

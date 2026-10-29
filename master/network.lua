@@ -14,7 +14,7 @@ local stations = require("stations")
 local network = {}
 
 -- Station fields that are network names, in display order
-local KEYS = { "name", "inlet", "output", "spout", "deployer", "burner", "buffer" }
+local KEYS = { "name", "inlet", "output", "spout", "deployer", "burner", "buffer", "saw" }
 local SIDES = { left = true, right = true, front = true, back = true, top = true, bottom = true }
 
 local function short(name) return (name:gsub("^.-:", "")) end

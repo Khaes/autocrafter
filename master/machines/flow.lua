@@ -5,6 +5,8 @@
 -- A station (config.stations):
 --   { inlet = "minecraft:chest_3", output = "minecraft:chest_2",
 --     timeout = 30, idle = 10, retries = 3 }
+--   saw    : (saw stations) the mechanical saw, with a modem: its filter is set to the
+--            result of each batch, which allows the stonecutter recipes
 --   timeout: seconds without any movement (inlet or output) before giving up
 --   idle   : inlet empty and nothing new for `idle` s = the pass is over
 --   retries: extra passes if results are missing (random output, item that went
@@ -33,6 +35,13 @@ local function empty(inv)
     if storage.import(inv, slot) < it.count then return false end
   end
   return true
+end
+
+-- End of a batch (done, failed or cancelled): the saw's filter is cleared, so that the
+-- saw is left as a player would expect it
+local function stop(station)
+  station.job = nil
+  if station.saw then pcall(peripheral.call, station.saw, "setFilter") end
 end
 
 -- Pours into the inlet enough for `crafts` crafts; returns nil or an error
@@ -67,13 +76,21 @@ function machine.start(station, recipe, count)
       return "Station not found: " .. tostring(inv)
     end
   end
+  -- The saw makes only the recipe whose result matches its filter (copper block: cut
+  -- copper, not stairs or slab); the other items go through unchanged
+  if station.saw then
+    if not peripheral.isPresent(station.saw) then return "Station not found: " .. station.saw end
+    peripheral.call(station.saw, "setFilter", recipe.output.name)
+  end
   -- Leftovers of a previous pass (late items, manual try)
   if not empty(station.inlet) or not empty(station.output) then
+    stop(station)
     return "Station busy: " .. station.output
   end
   local want = recipe.output.count * count
   local err = feed(station, recipe, craftsFor(recipe, want))
   if err then
+    stop(station)
     empty(station.inlet)
     return err
   end
@@ -95,7 +112,7 @@ function machine.poll(station)
   local have = job.got + (out[job.item] or 0)
 
   if have >= job.want then
-    station.job = nil
+    stop(station)
     -- Result, by-products and extra ingredients go back to storage
     if not empty(station.output) or not empty(station.inlet) then
       return nil, "Storage full"
@@ -112,7 +129,7 @@ function machine.poll(station)
 
   if inTotal > 0 then
     if quiet > (station.timeout or 30) then
-      station.job = nil
+      stop(station)
       return nil, ("Station stuck: %s (%d/%d %s)"):format(
         station.inlet, have, job.want, name(job.item))
     end
@@ -122,20 +139,20 @@ function machine.poll(station)
 
   -- Inlet empty, nothing arrives any more, results are missing: new pass
   if job.tries >= (station.retries or 3) then
-    station.job = nil
+    stop(station)
     empty(station.output)
     return nil, ("Not enough %s: %d/%d after %d passes"):format(
       name(job.item), have, job.want, job.tries + 1)
   end
   job.got = have
   if not empty(station.output) then
-    station.job = nil
+    stop(station)
     return nil, "Storage full"
   end
   job.tries = job.tries + 1
   local err = feed(station, job.recipe, craftsFor(job.recipe, job.want - have))
   if err then
-    station.job = nil
+    stop(station)
     empty(station.inlet)
     return nil, err
   end
@@ -146,7 +163,7 @@ end
 -- Order cancelled: the inlet and the output go back to storage. Items already in
 -- the machine reach the output later; the next batch puts them away first
 function machine.cancel(station)
-  station.job = nil
+  stop(station)
   empty(station.inlet)
   empty(station.output)
 end

@@ -63,6 +63,8 @@ end
 app.onEvent = function(ev)
   -- JEI "+" button with the tablet linked to this computer: the recipe goes into the order
   if ev[1] == "jei_recipe" then ctx.pages.list.order.fromJei(ev[2], ev[4]) end
+  -- New Schematicannon checklist on the lectern (pages/list.lua watchBook): popup
+  if ev[1] == "checklist" then ctx.pages.list.onBook() end
   if ev[1] == "peripheral" or ev[1] == "peripheral_detach" then networkChanged() end
 end
 
@@ -89,10 +91,10 @@ if config.scanned then
 else
   app:show("detector")
 end
--- The UI, the crafts and listening to the workers run at the same time; quitting
--- the UI stops everything
+-- The UI, the crafts, listening to the workers and watching the lectern run at the same
+-- time; quitting the UI stops everything
 local ok, err = pcall(parallel.waitForAny, function() app:run() end, crafter.worker, remote.listen,
-  screens.run)
+  screens.run, ctx.pages.list.watchBook)
 
 local outs = { term.current(), mon }
 for _, s in pairs(screens.screens()) do outs[#outs + 1] = s.mon end

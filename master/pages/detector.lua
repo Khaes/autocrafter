@@ -74,6 +74,9 @@ local HEATED_COMPACT_ITEMS, HEATED_COMPACT_RESULT = { "minecraft:iron_ingot" }, 
 -- Deployer test (Create recipe): DEPLOY_ITEM on the depot, DEPLOY_HELD in hand
 local DEPLOY_ITEM, DEPLOY_HELD, DEPLOY_RESULT = "create:cogwheel", "minecraft:oak_planks", "create:large_cogwheel"
 local MARKER = "minecraft:cobblestone" -- item put into a chest to find a worker's buffer
+-- Saw of a saw station: with SAW_FILTER (no recipe of SAW_ITEM gives it) the right saw
+-- lets SAW_ITEM through unchanged instead of making SAW_RESULT
+local SAW_ITEM, SAW_RESULT, SAW_FILTER = "minecraft:oak_log", "minecraft:stripped_oak_log", "minecraft:cobblestone"
 
 -- Blank configuration: the buffer is always below the turtle
 local function newConfig()
@@ -480,7 +483,7 @@ return function(ctx)
     -- Blocks of the stations already known (additional detection): neither tested nor emptied
     for _, list in pairs(detected.stations) do
       for _, station in ipairs(list) do
-        for _, key in ipairs({ "inlet", "output", "name", "spout", "deployer", "burner", "buffer" }) do
+        for _, key in ipairs({ "inlet", "output", "name", "spout", "deployer", "burner", "buffer", "saw" }) do
           if station[key] then used[station[key]] = true end
         end
       end
@@ -524,7 +527,7 @@ return function(ctx)
 
   ---------------------------------------------------------------- Machines
   -- Station fields that are network blocks, in the order of the messages
-  local STATION_KEYS = { "inlet", "output", "name", "spout", "deployer", "burner" }
+  local STATION_KEYS = { "inlet", "output", "name", "spout", "deployer", "burner", "saw" }
 
   -- Adds a station to machineName: { inlet, output } (flow), { name } (press),
   -- { name, spout } (spout)... Its blocks are taken and its inventories emptied
@@ -611,6 +614,43 @@ return function(ctx)
       if gained(before, now, output, confirm.item) > 0 then return false end
     end
     return false
+  end
+
+  -- Finds the mechanical saw (with a modem and the AutoCrafter Link mod: setFilter) of a
+  -- saw station: each free saw in turn gets SAW_FILTER, then a SAW_ITEM goes into the
+  -- inlet; the saw that lets it through unchanged (or holds it) is the station's.
+  -- The filter is cleared after each try. Without a saw found, station.saw stays nil
+  local function findSaw(station, used)
+    for _, saw in ipairs(peripherals['create:saw'] or {}) do
+      if not used[saw] and pcall(peripheral.call, saw, "setFilter", SAW_FILTER) then
+        updateStatus('Looking for the saw of ' .. short(station.inlet) .. ': ' .. short(saw))
+        local before = { [station.output] = totals(station.output) }
+        if storage.export(SAW_ITEM, 1, station.inlet) == 0 then
+          pcall(peripheral.call, saw, "setFilter")
+          missing = SAW_ITEM
+          return
+        end
+        local found, start = false, os.clock()
+        while os.clock() - start < OUTPUT_TIMEOUT do
+          sleep(CHECK_INTERVAL)
+          local now = { [station.output] = totals(station.output) }
+          if gained(before, now, station.output, SAW_ITEM) > 0 then found = true break end
+          if gained(before, now, station.output, SAW_RESULT) > 0 then break end
+          local ok, held = pcall(peripheral.call, saw, "list")
+          if ok and held and next(held) then found = true break end
+        end
+        pcall(peripheral.call, saw, "setFilter")
+        -- The log (or what the saw still holds) goes back to storage
+        sleep(CHECK_INTERVAL)
+        for _, inv in ipairs({ station.inlet, station.output, saw }) do storage.empty(inv) end
+        if found then
+          station.saw = saw
+          used[saw] = true
+          setInfo("Saw found: " .. short(station.inlet) .. " => " .. short(saw))
+          return
+        end
+      end
+    end
   end
 
   -- Sends each item of TESTS into the chest until the machine it feeds is found;
@@ -1062,6 +1102,11 @@ return function(ctx)
     local used = assigned()
     handleStorages(peripherals['minecraft:chest'], used)
     if missing then return end
+    -- Saws of the saw stations, also those of an earlier scan (saw modem added since)
+    for _, station in ipairs(detected.stations.sawing) do
+      if not station.saw then findSaw(station, used) end
+      if missing then return end
+    end
     handleDepot(peripherals['create:depot'], used)
     if missing then return end
     handleBasin(peripherals['create:basin'], peripherals['create:deployer'], used)

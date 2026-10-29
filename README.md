@@ -37,8 +37,8 @@ worker/   program of the optional worker turtles (extra crafting tables)
 **Storage and outputs** (all on the wired network, modems turned on)
 - Main storage: some chests, or a Storage Drawers controller.
 - One or more **output chests**: where the finished items are delivered.
-- Optional **trash**: a chest that drops into lava (the "Empty" button sends the
-  output there).
+- Optional **trash**: a chest that drops into lava (the detection empties the tested
+  chests there).
 - Optional Create **fluid tanks** for fluids (water, lava...).
 
 **Machines** (every block that the computer touches needs a modem)
@@ -55,12 +55,21 @@ worker/   program of the optional worker turtles (extra crafting tables)
 
 Several stations of the same machine share the work.
 
+**Saw with a modem**: also put a wired modem on the mechanical saw of a saw station.
+The computer then sets the saw's filter to the wanted result before each batch, which
+allows the **stonecutter recipes** (copper block -> cut copper, stone stairs, slabs...):
+without a filter the saw cycles through every result of an item. The detection finds
+the saw on its own (Scan > Additional for a station that already exists); it briefly
+puts a cobblestone filter on each free saw and sends an oak log.
+
 **Optional extras**
 - **Worker turtles**: more Crafty Turtles, each with its own buffer chest below it
   (modem on), on the same network.
 - **More monitors**: small screens for the live log, the craft list or the status.
   Keep one block between monitors of the same type, otherwise they merge.
 - **Speaker**: plays a chord when an order is done, low notes on errors.
+- **Lectern** (with a modem): holds the Material Checklist of a Create Schematicannon
+  for the **Book** button.
 
 ## 2. Install the code
 
@@ -112,10 +121,19 @@ detection again.
   AutoCrafter Link mod) and pick an item. The recipe page shows the ingredients (green: in
   stock, orange: can be crafted, red: missing), set the quantity and press **ADD**.
 - Repeat to build an order, choose the output under the list if you have several,
-  then press **CRAFT**. Missing ingredients are crafted first when possible.
+  then press **CRAFT**. Missing ingredients are crafted first when possible. Sent to an
+  output, an order first takes what the storage already has and only crafts the rest
+  (with the output "storage", everything is crafted).
+- **Book**: put the Material Checklist printed by a Schematicannon on the lectern; a
+  popup appears within 2 seconds (**Add** / **Ignore**). **Add** puts every item of the
+  book into the order, in full: the stock is sent first and the rest is crafted. An
+  item that cannot be crafted becomes a "(stock)" line, sent from the storage only;
+  what is missing of it is listed in the log. The **Book** button (top bar) does the
+  same at any time, for example with a book that was already on the lectern when the
+  turtle started.
 - **Crafts**: running, queued and finished orders. Click one to see its log and
   **Cancel** it.
-- **Logs**: the full log. **Empty**: sends the chosen output to the trash (two clicks).
+- **Logs**: the full log.
 - **Stations**: every configured block (green present, red missing, yellow no role).
   **Repair** renames a block that was broken and placed again.
 - Music note (top right): sound on/off.

@@ -24,6 +24,15 @@ end
 -- with `heat`, only those that get hot enough (a superheated station also does heated)
 function stations.pool(machineName, heat)
   if machineName == "turtle" then return { TURTLE, table.unpack(configured("turtle")) } end
+  -- Stonecutter recipes: the saw stations whose saw is on the network (saw = its name),
+  -- the filter chooses among the results of an item
+  if machineName == "stonecutting" then
+    local t = {}
+    for _, s in ipairs(configured("sawing")) do
+      if s.saw then t[#t + 1] = s end
+    end
+    return t
+  end
   local t = {}
   for _, s in ipairs(configured(machineName)) do
     if burner.level(s.heat) >= burner.level(heat) then t[#t + 1] = s end
